@@ -95,3 +95,13 @@ class TestHelpers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDeviceClassName(unittest.TestCase):
+    def test_selection(self) -> None:
+        from lifx_lights_sync.lifx_output import device_class_name
+
+        self.assertEqual(device_class_name(False, False), "Light")
+        self.assertEqual(device_class_name(True, False), "MatrixLight")
+        self.assertEqual(device_class_name(True, True), "CeilingLight")
+        self.assertEqual(device_class_name(False, True), "CeilingLight")

@@ -77,33 +77,73 @@ def _channel_serial_and_zone(channel_id: str) -> tuple[str, int | None]:
     return normalize_serial(channel_id), None
 
 
+def device_class_name(is_matrix: bool, is_ceiling: bool) -> str:
+    """Pick the lifx-async device class for a light's shape."""
+    if is_ceiling:
+        return "CeilingLight"
+    if is_matrix:
+        return "MatrixLight"
+    return "Light"
+
+
+async def _create_typed_device(ip: str, serial: str, class_name: str) -> Any:
+    """Create a device via the concrete class's ``from_ip`` factory.
+
+    ``Device.from_ip`` returns a BASE Device with no color methods at
+    all (proven live: get_color/set_color AttributeErrors, silently
+    swallowed, made the whole plugin a no-op) — the factory is
+    class-aware, so it must be called on Light / MatrixLight /
+    CeilingLight. Falls back to Light when a subclass is unavailable.
+    """
+    device_cls: Any = None
+    try:
+        if class_name == "CeilingLight":
+            from lifx.devices.ceiling import CeilingLight  # noqa: PLC0415
+
+            device_cls = CeilingLight
+        elif class_name == "MatrixLight":
+            from lifx.devices.matrix import MatrixLight  # noqa: PLC0415
+
+            device_cls = MatrixLight
+    except Exception:  # noqa: BLE001
+        device_cls = None
+    if device_cls is None:
+        from lifx.devices.light import Light  # noqa: PLC0415
+
+        device_cls = Light
+    return await device_cls.from_ip(ip, serial=serial)
+
+
 async def open_devices(
-    sources: Mapping[str, str] | Iterable[LanDevice],
+    sources: Mapping[str, str] | Iterable[Any],
 ) -> dict[str, Any]:
     """Create connected lifx-async device objects for known serial/IPs.
 
-    ``sources`` is either a serial -> IP mapping (the normal path: IPs
-    already resolved by discovery, HA config-entry hosts first) or an
-    iterable of :class:`~.discovery.LanDevice`.
-
-    Primary path per device: ``Device.from_ip(ip, serial=serial)`` —
-    in lifx-async 8.0.0 this factory queries the product and returns an
-    instance of the appropriate subclass (Light / MatrixLight /
-    CeilingLight / ...). Devices that fail the direct path fall back to
-    a ``discover_devices`` sweep matched on serial, using the confirmed
+    ``sources`` is either a serial -> IP mapping (devices are created
+    as plain Lights) or an iterable of objects carrying ``serial``,
+    ``ip``, ``is_matrix`` and ``is_ceiling`` (LanDevice /
+    ResolvedLight), which selects the concrete device class per
+    light. Devices that fail the direct path fall back to a
+    ``discover_devices`` sweep matched on serial, using the confirmed
     ``DiscoveredDevice.create_device()``. Failures are logged and
     skipped, never fatal.
     """
+    # serial -> (ip, is_matrix, is_ceiling)
+    wanted: dict[str, tuple[str, bool, bool]] = {}
     if isinstance(sources, Mapping):
-        wanted = {
-            normalize_serial(serial): str(ip)
-            for serial, ip in sources.items()
-            if ip
-        }
+        for serial, ip in sources.items():
+            if ip:
+                wanted[normalize_serial(serial)] = (str(ip), False, False)
     else:
-        wanted = {
-            device.serial: device.ip for device in sources if device.ip
-        }
+        for device in sources:
+            ip = getattr(device, "ip", None)
+            serial = normalize_serial(getattr(device, "serial", ""))
+            if ip and len(serial) == 12:
+                wanted[serial] = (
+                    str(ip),
+                    bool(getattr(device, "is_matrix", False)),
+                    bool(getattr(device, "is_ceiling", False)),
+                )
     if not wanted:
         return {}
 
@@ -113,35 +153,26 @@ async def open_devices(
         try:
             # Devices work without an explicit enter, but entering loads
             # state/geometry (and the ceiling tile chain) up front.
-            # TODO(live-verify): Device.__aenter__ loads state in
-            # lifx-async 8.0.0; verify entering here does not conflict
-            # with the connection the Animator later borrows.
             await device.__aenter__()
         except Exception:  # noqa: BLE001
             _LOGGER.debug("Device %s entered without context", serial, exc_info=True)
         opened[serial] = device
 
-    try:
-        from lifx.devices.base import Device  # noqa: PLC0415
-
-        for serial, ip in wanted.items():
-            try:
-                # TODO(live-verify): Device.from_ip returning the
-                # concrete subclass is documented in the 8.0.0 source;
-                # confirm the returned type for a Ceiling on live hw.
-                device = await Device.from_ip(ip, serial=serial)
-            except Exception:  # noqa: BLE001
-                _LOGGER.debug(
-                    "Direct from_ip failed for %s (%s); will try sweep",
-                    serial,
-                    ip,
-                    exc_info=True,
-                )
-                continue
-            if device is not None:
-                await _adopt(serial, device)
-    except Exception:  # noqa: BLE001
-        _LOGGER.debug("Direct device creation unavailable", exc_info=True)
+    for serial, (ip, is_matrix, is_ceiling) in wanted.items():
+        class_name = device_class_name(is_matrix, is_ceiling)
+        try:
+            device = await _create_typed_device(ip, serial, class_name)
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug(
+                "Direct from_ip (%s) failed for %s (%s); will try sweep",
+                class_name,
+                serial,
+                ip,
+                exc_info=True,
+            )
+            continue
+        if device is not None:
+            await _adopt(serial, device)
 
     missing = sorted(set(wanted) - set(opened))
     if missing:
@@ -233,7 +264,7 @@ class LifxSender:
         try:
             await device.set_power(True)
         except Exception:  # noqa: BLE001
-            _LOGGER.debug("set_power failed for %s", serial, exc_info=True)
+            _LOGGER.warning("set_power failed for %s", serial, exc_info=True)
         self._powered_on.add(serial)
 
     # -- snapshot / restore --------------------------------------------------
@@ -252,7 +283,7 @@ class LifxSender:
                     snapshot.color = _hsbk_components(color)
                     snapshot.power = int(power)
                 except Exception:  # noqa: BLE001
-                    _LOGGER.debug("Snapshot color failed for %s", light.serial, exc_info=True)
+                    _LOGGER.warning("Snapshot color failed for %s", light.serial, exc_info=True)
                 if light.is_matrix:
                     try:
                         tiles = await device.get_all_tile_colors()
@@ -352,7 +383,7 @@ class LifxSender:
             try:
                 await device.set_color(self._to_hsbk(rgb))
             except Exception:  # noqa: BLE001
-                _LOGGER.debug("set_color failed for %s", serial, exc_info=True)
+                _LOGGER.warning("set_color failed for %s", serial, exc_info=True)
 
         for serial, zone_map in zones.items():
             device = self._device(serial)
@@ -366,7 +397,7 @@ class LifxSender:
             try:
                 await self._send_matrix_frame(serial, device, frame, target)
             except Exception:  # noqa: BLE001
-                _LOGGER.debug("Matrix send failed for %s", serial, exc_info=True)
+                _LOGGER.warning("Matrix send failed for %s", serial, exc_info=True)
 
     async def _send_matrix_frame(
         self,

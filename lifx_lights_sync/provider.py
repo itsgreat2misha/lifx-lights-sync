@@ -264,15 +264,11 @@ class LifxLightsSyncProvider(PluginProvider):
                 len(missing_serials),
             )
 
-        # Resolved IPs already encode the precedence (HA host > LAN).
-        ip_by_serial = {
-            light.serial: light.ip
-            for target in targets
-            for light in target.lights
-            if light.ip
-        }
+        # Open typed devices (Light/MatrixLight/CeilingLight per light
+        # shape — a base Device has no color methods at all).
+        all_lights = [light for target in targets for light in target.lights]
         try:
-            self._devices = await open_devices(ip_by_serial)
+            self._devices = await open_devices(all_lights)
         except Exception:  # noqa: BLE001
             self.logger.warning("Could not open LIFX devices", exc_info=True)
             self._devices = {}
