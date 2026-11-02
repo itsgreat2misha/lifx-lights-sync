@@ -456,13 +456,28 @@ class LifxBridgeManager:
                 continue
             if not target.channels:
                 continue
+            sender_devices = {
+                light.serial: devices_by_serial[light.serial]
+                for light in target.lights
+                if light.serial in devices_by_serial
+            }
+            if target.lights and not sender_devices:
+                self.logger.warning(
+                    "Target '%s' has %d lights but no reachable devices; "
+                    "it will not react until discovery finds their IPs",
+                    target.name,
+                    len(target.lights),
+                )
+            elif len(sender_devices) < len(target.lights):
+                self.logger.info(
+                    "Target '%s': %d of %d lights reachable",
+                    target.name,
+                    len(sender_devices),
+                    len(target.lights),
+                )
             sender = LifxSender(
                 target,
-                {
-                    light.serial: devices_by_serial[light.serial]
-                    for light in target.lights
-                    if light.serial in devices_by_serial
-                },
+                sender_devices,
                 send_rate_hz=settings.send_rate_hz,
             )
             bridge = LifxTargetBridge(self.provider, target, sendspin_server, sender)

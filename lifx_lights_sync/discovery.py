@@ -3,28 +3,30 @@
 Strategy (see README for the diagram):
 
 1. Query Home Assistant for the device, entity and area registries
-   (identity, friendly names, areas, bound ``light.*`` entities) AND
-   its LIFX config entries (``config_entries/get``). Each per-device
-   LIFX config entry stores ``data = {"host": <ip>, "serial":
-   <serial>}`` — this is how HA itself reaches the light, and its
-   discovery keeps ``host`` current when the IP changes. So HA
-   provides the *primary* serial -> IP mapping. (HA diagnostics
-   redacts host/serial on display, which is easy to mistake for "HA
-   doesn't store IPs" — the config entry data does.)
-   The HA data is fetched either through Music Assistant's own
-   ``hass`` provider (preferred — it already holds an authenticated
-   connection; see ``ha_via_mass``) or directly over HA's WebSocket
-   API with a configured URL + long-lived token
+   (identity, friendly names, areas, bound ``light.*`` entities).
+   HA is the source of *identity*, not of IPs: each per-device LIFX
+   config entry does store ``data = {"host": <ip>, "serial": ...}``
+   on disk, but the WebSocket ``config_entries/get`` API strips
+   ``data`` from its payload, so the host is not readable through
+   any supported API (verified against HA 2026.10; the direct-WS
+   fetcher still parses hosts opportunistically in case a future HA
+   exposes them). The HA data is fetched either through Music
+   Assistant's own ``hass`` provider (preferred — it already holds
+   an authenticated connection; see ``ha_via_mass``) or directly
+   over HA's WebSocket API with a configured URL + long-lived token
    (:func:`fetch_ha_lifx_lights`).
-2. Discover devices on the LAN with lifx-async (UDP broadcast + mDNS).
-   The LAN is (a) the fallback when HA is absent/unreachable, (b) a
-   gap-filler for lights whose HA entry lacks a host, and (c) an
-   optional cross-check — plus it is the only source of matrix geometry.
-3. Merge on the normalized serial with strict precedence: an HA host
-   always wins over a differing LAN IP for the same serial. LAN devices
-   HA does not know are still usable in auto/lan modes; HA lights with
-   no IP from either source are kept as targets without an IP (skipped
-   by the sender until a later discovery finds them).
+2. Discover devices on the LAN with lifx-async (UDP broadcast +
+   mDNS): fallback when HA is absent, cross-check, and the only
+   source of matrix geometry. Broadcast alone is unreliable across
+   VLANs/relays (it found barely half of a 66-light install).
+3. Unicast sweep (:func:`sweep_for_serials`): for every HA-known
+   serial still missing an IP, raw-probe every host of the /24
+   subnets where lights are already known to live. Unicast UDP is
+   routed, so this closes the broadcast gap.
+4. Merge on the normalized serial. LAN devices HA does not know are
+   still usable in auto/lan modes; lights with no IP from any
+   source stay in their target without a device (the sender skips
+   them, and bridge setup logs the shortfall).
 
 The pure functions (:func:`normalize_serial`, :func:`parse_ha_registries`,
 :func:`merge_targets`) have no third-party imports and are unit-tested.
@@ -681,6 +683,147 @@ async def _enrich_lan_device(discovered: Any, lan: LanDevice) -> LanDevice:
                 pass
 
 
+# ---------------------------------------------------------------------------
+# Unicast subnet sweep (gap-filler for broadcast misses)
+# ---------------------------------------------------------------------------
+
+# LIFX LAN protocol constants for the raw GetService probe below.
+_MSG_GET_SERVICE = 2
+_MSG_STATE_SERVICE = 3
+_HEADER_LEN = 36
+_SWEEP_SOURCE_ID = 0x4C465853  # "LFXS"
+
+
+def build_get_service_packet(source_id: int = _SWEEP_SOURCE_ID) -> bytes:
+    """Build a raw LIFX GetService probe packet (36-byte header, no payload)."""
+    import struct
+
+    header = struct.pack(
+        "<HHI8s6sBBQHH",
+        _HEADER_LEN,
+        1024 | (1 << 12) | (1 << 13),  # protocol | addressable | tagged
+        source_id,
+        b"\x00" * 8,  # target: all devices (tagged)
+        b"\x00" * 6,  # reserved
+        0x01,  # res_required
+        0,  # sequence
+        0,  # reserved (protocol header tail)
+        _MSG_GET_SERVICE,
+        0,  # reserved
+    )
+    return header
+
+
+def parse_state_service(data: bytes) -> str | None:
+    """Extract the serial from a raw StateService reply, else None.
+
+    Pure function (unit-tested): checks length, message type and the
+    UDP service byte; the serial is the reply header's target field.
+    """
+    if len(data) < _HEADER_LEN + 5:
+        return None
+    msg_type = int.from_bytes(data[32:34], "little")
+    if msg_type != _MSG_STATE_SERVICE:
+        return None
+    if data[_HEADER_LEN] != 1:  # service: 1 = UDP
+        return None
+    serial = data[8:14].hex()
+    return serial if len(serial) == 12 else None
+
+
+def subnets_from_ips(ips: Any) -> list[str]:
+    """Derive the /24 prefixes ("a.b.c") from a collection of IPv4 strings."""
+    prefixes: list[str] = []
+    for ip in ips:
+        parts = str(ip).split(".")
+        if len(parts) != 4 or not all(part.isdigit() for part in parts):
+            continue
+        prefix = ".".join(parts[:3])
+        if prefix not in prefixes:
+            prefixes.append(prefix)
+    return prefixes
+
+
+async def sweep_for_serials(
+    wanted_serials: Any,
+    seed_ips: Any,
+    timeout_s: float = const.SWEEP_TIMEOUT_S,
+) -> dict[str, str]:
+    """Find IPs for known serials by unicast-probing their likely subnets.
+
+    Broadcast discovery is unreliable across VLANs/relays (it found
+    barely half of a 66-light install in testing), and Home
+    Assistant's WebSocket ``config_entries/get`` strips ``data`` — so
+    the ``host`` HA stores per LIFX entry is NOT reachable through the
+    API. What does work everywhere unicast UDP is routed: a raw
+    GetService probe to every host of the /24 subnets where lights
+    are already known to live (seeded from broadcast results).
+    Returns {serial: ip} for the wanted serials that answered.
+    """
+    import asyncio as _asyncio
+
+    wanted = {normalize_serial(serial) for serial in wanted_serials}
+    wanted.discard("")
+    prefixes = subnets_from_ips(seed_ips)
+    if not wanted or not prefixes:
+        return {}
+
+    loop = _asyncio.get_running_loop()
+    found: dict[str, str] = {}
+    packet = build_get_service_packet()
+
+    class _Probe(_asyncio.DatagramProtocol):
+        def datagram_received(self, data: bytes, addr: Any) -> None:
+            serial = parse_state_service(data)
+            if serial and serial in wanted and serial not in found:
+                found[serial] = str(addr[0])
+
+    transport, _protocol = await loop.create_datagram_endpoint(
+        _Probe, local_addr=("0.0.0.0", 0)
+    )
+    try:
+        hosts = [
+            f"{prefix}.{host}"
+            for prefix in prefixes
+            for host in range(1, 255)
+        ]
+        # Two blasts: some bulbs miss a probe while busy; the second
+        # pass (~halfway through the window) catches most stragglers.
+        for blast in range(2):
+            for index, ip in enumerate(hosts):
+                transport.sendto(packet, (ip, const.LIFX_UDP_PORT))
+                if index % 128 == 127:
+                    await _asyncio.sleep(0)
+            if blast == 0:
+                await _asyncio.sleep(timeout_s / 2)
+        remaining = timeout_s / 2
+        while remaining > 0 and len(found) < len(wanted):
+            step = min(0.1, remaining)
+            await _asyncio.sleep(step)
+            remaining -= step
+    finally:
+        transport.close()
+    return found
+
+
+def apply_sweep_results(
+    targets: Sequence[SyncTarget], found: Mapping[str, str]
+) -> int:
+    """Fill in missing light IPs from a sweep result; return how many."""
+    filled = 0
+    for target in targets:
+        for index, light in enumerate(target.lights):
+            if light.ip:
+                continue
+            ip = found.get(light.serial)
+            if ip:
+                from dataclasses import replace
+
+                target.lights[index] = replace(light, ip=ip)
+                filled += 1
+    return filled
+
+
 async def discover_targets(
     ha_lights: Sequence[HaLifxLight],
     timeout_s: float = const.LAN_DISCOVERY_TIMEOUT_S,
@@ -698,8 +841,13 @@ __all__ = [
     "ResolvedLight",
     "SyncTarget",
     "apply_ha_hosts",
+    "apply_sweep_results",
+    "build_get_service_packet",
     "discover_lan",
     "discover_targets",
+    "parse_state_service",
+    "subnets_from_ips",
+    "sweep_for_serials",
     "fetch_ha_lifx_lights",
     "merge_targets",
     "normalize_serial",

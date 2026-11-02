@@ -79,16 +79,20 @@ when the hass provider is not configured.
 
 Key facts that shape this design:
 
-- **HA's LIFX config entry data stores `{"host": "<ip>", "serial":
-  "<serial>"}` per light** — that is how HA itself reaches the light,
-  and HA's discovery keeps `host` current when the IP changes. It is
-  only the device/entity *registries* that lack IPs, and HA's
-  diagnostics display redacts host/serial — which is easy to mistake
-  for "HA doesn't store IPs".
-- **Merge precedence: HA host always wins** over a differing LAN IP
-  for the same serial. LAN discovery then fills in lights whose HA
-  entry has no host, cross-checks the rest, and supplies matrix
-  geometry (which HA never exposes).
+- **HA provides identity, not IPs.** Each LIFX config entry does
+  store `{"host": "<ip>", "serial": "<serial>"}` on disk in HA, but
+  the WebSocket `config_entries/get` API strips `data`, and the
+  registries carry no IP either — so no supported HA API hands the
+  plugin a light's address. HA's contribution is the authoritative
+  list of lights (serial, name, area, bound entities).
+- **IPs come from the LAN, in two passes.** Broadcast discovery
+  (lifx-async) finds what it can and supplies matrix geometry, but
+  across VLANs/relays it can miss half the install. So for every
+  HA-known serial still missing an IP, the plugin unicast-probes
+  every host of the subnets where lights are already known to live
+  (raw LIFX GetService) — unicast UDP is routed, which closes the
+  gap. If a future HA ever exposes entry hosts, they win over LAN
+  results for the same serial.
 - When HA is absent or unreachable and the source is not `ha`/`hass`,
   LAN-only mode works on its own: bulbs group under one
   "LIFX Lights" target, matrix lights still get individual targets.

@@ -39,9 +39,11 @@ from .bridge import LifxBridgeManager
 from .discovery import (
     HaDiscoveryError,
     HaLifxLight,
+    apply_sweep_results,
     discover_lan,
     fetch_ha_lifx_lights,
     merge_targets,
+    sweep_for_serials,
 )
 from .ha_via_mass import fetch_ha_via_hass_provider
 from .lifx_output import open_devices
@@ -230,6 +232,37 @@ class LifxLightsSyncProvider(PluginProvider):
             len(targets),
             ", ".join(target.name for target in targets),
         )
+
+        # Unicast sweep: broadcast discovery misses many bulbs across
+        # VLANs, and HA's config_entries/get strips entry data, so the
+        # host HA stores is not API-readable. Probe the subnets where
+        # lights are already known to live for every serial still
+        # missing an IP (raw GetService; see discovery.sweep_for_serials).
+        missing_serials = {
+            light.serial
+            for target in targets
+            for light in target.lights
+            if not light.ip
+        }
+        if missing_serials:
+            seed_ips = [device.ip for device in lan_devices if device.ip]
+            seed_ips += [
+                light.ip
+                for target in targets
+                for light in target.lights
+                if light.ip
+            ]
+            try:
+                found = await sweep_for_serials(missing_serials, seed_ips)
+            except Exception:  # noqa: BLE001
+                self.logger.warning("LIFX unicast sweep failed", exc_info=True)
+                found = {}
+            filled = apply_sweep_results(targets, found)
+            self.logger.info(
+                "Unicast sweep found %d of %d lights missing an IP",
+                filled,
+                len(missing_serials),
+            )
 
         # Resolved IPs already encode the precedence (HA host > LAN).
         ip_by_serial = {

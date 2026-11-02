@@ -74,6 +74,7 @@ STOP_DEBOUNCE_S = 2.0  # keep streaming briefly across track gaps
 LIFX_UDP_PORT = 56700
 DEFAULT_KELVIN = 3500  # kelvin attached to HSBK colors built from RGB
 LAN_DISCOVERY_TIMEOUT_S = 6.0
+SWEEP_TIMEOUT_S = 5.0
 
 # --- Sync target kinds / ids ---
 TARGET_KIND_AREA = "area"
@@ -86,6 +87,7 @@ LAN_TARGET_ID = "lifx-lights"
 LAN_TARGET_NAME = "LIFX Lights"
 
 __all__ = [
+    "SWEEP_TIMEOUT_S",
     "COLOR_BRIDGE_ROLE_ID",
     "COLOR_MODES",
     "CONF_BRIGHTNESS",
