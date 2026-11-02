@@ -1,0 +1,34 @@
+{
+    "config": {
+        "entries": {
+            "brightness": {
+                "description": "Maximum brightness of the sync effect, in percent.",
+                "label": "Brightness (%)"
+            },
+            "color_mode": {
+                "description": "Visualizer style applied to the lights: Smooth, Ambient, Flashing or Energetic.",
+                "label": "Color mode"
+            },
+            "discovery_source": {
+                "description": "Auto asks Home Assistant first and uses the LAN as fallback; Home Assistant uses only lights known to Home Assistant (LAN fills IP gaps); LAN ignores Home Assistant entirely.",
+                "label": "Discovery source"
+            },
+            "ha_token": {
+                "description": "Long-lived access token from Home Assistant (profile -> Security). Used read-only to list LIFX devices, entities, areas and config entries.",
+                "label": "Home Assistant long-lived access token"
+            },
+            "ha_url": {
+                "description": "Base URL of your Home Assistant instance, e.g. http://homeassistant.local:8123",
+                "label": "Home Assistant URL"
+            },
+            "latency_ms": {
+                "description": "Shift the visualizer render time to compensate for speaker or network latency.",
+                "label": "Latency compensation (ms)"
+            },
+            "send_rate_hz": {
+                "description": "Rate limit for color updates sent to each individual LIFX light.",
+                "label": "Max sends per second (per light)"
+            }
+        }
+    }
+}

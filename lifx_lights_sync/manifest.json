@@ -1,0 +1,22 @@
+{
+    "builtin": false,
+    "codeowners": [
+        "@itsgreat2misha"
+    ],
+    "depends_on": "sendspin",
+    "description": "Sync LIFX lights to music using the Sendspin visualizer stream.",
+    "documentation": "https://github.com/itsgreat2misha/lifx-lights-sync",
+    "domain": "lifx_lights_sync",
+    "icon": "lightbulb-group",
+    "mdns_discovery": [
+        "_lifx._udp.local."
+    ],
+    "multi_instance": true,
+    "name": "LIFX Lights Sync",
+    "requirements": [
+        "lifx-async==8.0.0"
+    ],
+    "stage": "beta",
+    "type": "plugin",
+    "version": "0.1.0"
+}

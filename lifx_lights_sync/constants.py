@@ -1,0 +1,140 @@
+"""Constants for the LIFX Lights Sync plugin.
+
+This module is intentionally free of Music Assistant imports so it can be
+imported (and unit-tested) outside a running Music Assistant instance.
+"""
+
+from __future__ import annotations
+
+DOMAIN = "lifx_lights_sync"
+
+# --- Config entry keys (mirror the Hue Lights Sync plugin's naming style) ---
+CONF_DISCOVERY_SOURCE = "discovery_source"
+CONF_HA_URL = "ha_url"
+CONF_HA_TOKEN = "ha_token"
+CONF_BRIGHTNESS = "brightness"
+CONF_COLOR_MODE = "color_mode"
+CONF_LATENCY_MS = "latency_ms"
+CONF_SEND_RATE_HZ = "send_rate_hz"
+
+# --- Discovery sources ---
+SOURCE_AUTO = "auto"  # Home Assistant first, LAN for IPs + fallback
+SOURCE_HA = "ha"  # Home Assistant defines the lights; LAN only resolves IPs
+SOURCE_LAN = "lan"  # LAN only, no Home Assistant involved
+DISCOVERY_SOURCES = (SOURCE_AUTO, SOURCE_HA, SOURCE_LAN)
+DEFAULT_DISCOVERY_SOURCE = SOURCE_AUTO
+
+# --- Defaults ---
+DEFAULT_HA_URL = ""
+DEFAULT_HA_TOKEN = ""
+DEFAULT_BRIGHTNESS = 80  # percent
+DEFAULT_COLOR_MODE = "smooth"
+DEFAULT_LATENCY_MS = 0
+DEFAULT_SEND_RATE_HZ = 20
+
+# Brightness is configured as a percentage so the UI matches Music
+# Assistant conventions; internally the analyzer works with 0.0-1.0.
+MIN_BRIGHTNESS = 1
+MAX_BRIGHTNESS = 100
+MIN_LATENCY_MS = 0
+MAX_LATENCY_MS = 2_000
+MIN_SEND_RATE_HZ = 1
+MAX_SEND_RATE_HZ = 30
+
+# --- Analyzer modes (presets ported from the Hue Lights Sync analyzer) ---
+MODE_SMOOTH = "smooth"
+MODE_AMBIENT = "ambient"
+MODE_FLASHING = "flashing"
+MODE_ENERGETIC = "energetic"
+COLOR_MODES = (MODE_SMOOTH, MODE_AMBIENT, MODE_FLASHING, MODE_ENERGETIC)
+
+# --- Sendspin visualizer request (mirrors hue_entertainment @73c3e59) ---
+# The Sendspin server computes the spectrum; we only declare what we want.
+VISUALIZER_RATE_MAX = 20  # frames per second requested from the server
+VISUALIZER_TYPES = ("beat", "peak", "spectrum")
+SPECTRUM_N_DISP_BINS = 17
+SPECTRUM_SCALE = "mel"
+SPECTRUM_F_MIN = 20
+SPECTRUM_F_MAX = 20_000
+VISUALIZER_BUFFER_CAPACITY = 2048
+
+# Sendspin bridge role identifiers. The canonical values live in
+# ``music_assistant.providers.sendspin.bridge_role``; bridge.py imports them
+# from there when running inside Music Assistant and only falls back to
+# these literals when that module is unavailable.
+VISUALIZER_BRIDGE_ROLE_ID = "visualizer@_bridge"
+COLOR_BRIDGE_ROLE_ID = "color@_bridge"
+
+# --- Render loop ---
+RENDER_FPS = 30  # local render/send tick, independent of visualizer rate
+STOP_DEBOUNCE_S = 2.0  # keep streaming briefly across track gaps
+
+# --- LIFX protocol ---
+LIFX_UDP_PORT = 56700
+DEFAULT_KELVIN = 3500  # kelvin attached to HSBK colors built from RGB
+LAN_DISCOVERY_TIMEOUT_S = 6.0
+
+# --- Sync target kinds / ids ---
+TARGET_KIND_AREA = "area"
+TARGET_KIND_MATRIX = "matrix"
+TARGET_KIND_UNGROUPED = "ungrouped"
+TARGET_KIND_ALL = "all"
+UNGROUPED_TARGET_ID = "ungrouped"
+UNGROUPED_TARGET_NAME = "Ungrouped"
+LAN_TARGET_ID = "lifx-lights"
+LAN_TARGET_NAME = "LIFX Lights"
+
+__all__ = [
+    "COLOR_BRIDGE_ROLE_ID",
+    "COLOR_MODES",
+    "CONF_BRIGHTNESS",
+    "CONF_COLOR_MODE",
+    "CONF_DISCOVERY_SOURCE",
+    "CONF_HA_TOKEN",
+    "CONF_HA_URL",
+    "CONF_LATENCY_MS",
+    "CONF_SEND_RATE_HZ",
+    "DEFAULT_BRIGHTNESS",
+    "DEFAULT_COLOR_MODE",
+    "DEFAULT_DISCOVERY_SOURCE",
+    "DEFAULT_HA_TOKEN",
+    "DEFAULT_HA_URL",
+    "DEFAULT_KELVIN",
+    "DEFAULT_LATENCY_MS",
+    "DEFAULT_SEND_RATE_HZ",
+    "DISCOVERY_SOURCES",
+    "DOMAIN",
+    "LAN_DISCOVERY_TIMEOUT_S",
+    "LAN_TARGET_ID",
+    "LAN_TARGET_NAME",
+    "LIFX_UDP_PORT",
+    "MAX_BRIGHTNESS",
+    "MAX_LATENCY_MS",
+    "MAX_SEND_RATE_HZ",
+    "MIN_BRIGHTNESS",
+    "MIN_LATENCY_MS",
+    "MIN_SEND_RATE_HZ",
+    "MODE_AMBIENT",
+    "MODE_ENERGETIC",
+    "MODE_FLASHING",
+    "MODE_SMOOTH",
+    "RENDER_FPS",
+    "SOURCE_AUTO",
+    "SOURCE_HA",
+    "SOURCE_LAN",
+    "SPECTRUM_F_MAX",
+    "SPECTRUM_F_MIN",
+    "SPECTRUM_N_DISP_BINS",
+    "SPECTRUM_SCALE",
+    "STOP_DEBOUNCE_S",
+    "TARGET_KIND_ALL",
+    "TARGET_KIND_AREA",
+    "TARGET_KIND_MATRIX",
+    "TARGET_KIND_UNGROUPED",
+    "UNGROUPED_TARGET_ID",
+    "UNGROUPED_TARGET_NAME",
+    "VISUALIZER_BRIDGE_ROLE_ID",
+    "VISUALIZER_BUFFER_CAPACITY",
+    "VISUALIZER_RATE_MAX",
+    "VISUALIZER_TYPES",
+]
