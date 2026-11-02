@@ -2,15 +2,20 @@
 
 Strategy (see README for the diagram):
 
-1. If configured, query Home Assistant's WebSocket API for the device,
-   entity and area registries (identity, friendly names, areas, bound
-   ``light.*`` entities) AND its LIFX config entries
-   (``config_entries/get``). Each per-device LIFX config entry stores
-   ``data = {"host": <ip>, "serial": <serial>}`` — this is how HA itself
-   reaches the light, and its discovery keeps ``host`` current when the
-   IP changes. So HA provides the *primary* serial -> IP mapping.
-   (HA diagnostics redacts host/serial on display, which is easy to
-   mistake for "HA doesn't store IPs" — the config entry data does.)
+1. Query Home Assistant for the device, entity and area registries
+   (identity, friendly names, areas, bound ``light.*`` entities) AND
+   its LIFX config entries (``config_entries/get``). Each per-device
+   LIFX config entry stores ``data = {"host": <ip>, "serial":
+   <serial>}`` — this is how HA itself reaches the light, and its
+   discovery keeps ``host`` current when the IP changes. So HA
+   provides the *primary* serial -> IP mapping. (HA diagnostics
+   redacts host/serial on display, which is easy to mistake for "HA
+   doesn't store IPs" — the config entry data does.)
+   The HA data is fetched either through Music Assistant's own
+   ``hass`` provider (preferred — it already holds an authenticated
+   connection; see ``ha_via_mass``) or directly over HA's WebSocket
+   API with a configured URL + long-lived token
+   (:func:`fetch_ha_lifx_lights`).
 2. Discover devices on the LAN with lifx-async (UDP broadcast + mDNS).
    The LAN is (a) the fallback when HA is absent/unreachable, (b) a
    gap-filler for lights whose HA entry lacks a host, and (c) an
@@ -39,6 +44,15 @@ from .analyzer import LightChannel
 _LOGGER = logging.getLogger(__name__)
 
 _HEX_DIGITS = re.compile(r"[^0-9a-f]")
+
+
+class HaDiscoveryError(RuntimeError):
+    """Home Assistant discovery could not be performed.
+
+    Raised by the HA fetchers when the source is absent, unavailable or
+    errors out, so the provider can fall back to the next source (or to
+    LAN discovery) with a clear log line.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -678,6 +692,7 @@ async def discover_targets(
 
 
 __all__ = [
+    "HaDiscoveryError",
     "HaLifxLight",
     "LanDevice",
     "ResolvedLight",

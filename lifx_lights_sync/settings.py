@@ -1,17 +1,26 @@
-"""Typed, defensive readers for the plugin configuration.
+"""Readers for the LIFX Lights Sync playback/discovery settings.
 
-Music Assistant hands a provider its config values as a loose mapping.
-Every reader here coerces and clamps, and falls back to the documented
-default on missing/invalid input, so a bad value can never crash setup.
-No Music Assistant imports: this module is unit-testable in isolation.
+Mirrors the installed Hue Lights Sync ``settings.py``: each reader takes
+the provider's ``ProviderConfig`` and normalizes the raw value returned
+by ``config.get_value(key)`` (stored values can come back as str/float,
+so numbers go through ``int(float(str(value)))``).
+
+On top of the Hue-style readers, :class:`PluginSettings` bundles all
+values into one immutable object for the bridge/provider plumbing. Its
+builder methods never raise: missing/invalid input falls back to the
+documented defaults, so a bad value can never crash setup. This module
+has no Music Assistant imports and is unit-testable in isolation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from . import constants as const
+
+if TYPE_CHECKING:
+    from music_assistant_models.config_entries import ProviderConfig
 
 
 def _as_str(value: Any, default: str = "") -> str:
@@ -23,7 +32,7 @@ def _as_str(value: Any, default: str = "") -> str:
 
 def _as_int(value: Any, default: int, minimum: int, maximum: int) -> int:
     try:
-        number = int(float(value))  # accept "80" and 80.0 alike
+        number = int(float(str(value)))  # accept "80" and 80.0 alike
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, number))
@@ -32,6 +41,70 @@ def _as_int(value: Any, default: int, minimum: int, maximum: int) -> int:
 def _as_choice(value: Any, choices: tuple[str, ...], default: str) -> str:
     text = _as_str(value).lower()
     return text if text in choices else default
+
+
+# -- Hue-style readers (take the ProviderConfig) ---------------------------
+
+
+def get_discovery_source(config: ProviderConfig) -> str:
+    """Return the configured discovery source (auto/hass/ha/lan)."""
+    return _as_choice(
+        config.get_value(const.CONF_DISCOVERY_SOURCE),
+        const.DISCOVERY_SOURCES,
+        const.DEFAULT_DISCOVERY_SOURCE,
+    )
+
+
+def get_ha_url(config: ProviderConfig) -> str:
+    """Return the configured direct Home Assistant base URL (may be empty)."""
+    return _as_str(config.get_value(const.CONF_HA_URL)).rstrip("/")
+
+
+def get_ha_token(config: ProviderConfig) -> str:
+    """Return the configured direct Home Assistant token (may be empty)."""
+    return _as_str(config.get_value(const.CONF_HA_TOKEN))
+
+
+def get_brightness(config: ProviderConfig) -> int:
+    """Return the configured brightness percentage."""
+    return _as_int(
+        config.get_value(const.CONF_BRIGHTNESS),
+        const.DEFAULT_BRIGHTNESS,
+        const.MIN_BRIGHTNESS,
+        const.MAX_BRIGHTNESS,
+    )
+
+
+def get_color_mode(config: ProviderConfig) -> str:
+    """Return the configured visualization mode."""
+    return _as_choice(
+        config.get_value(const.CONF_COLOR_MODE),
+        const.COLOR_MODES,
+        const.DEFAULT_COLOR_MODE,
+    )
+
+
+def get_latency_ms(config: ProviderConfig) -> int:
+    """Return the configured latency compensation in milliseconds."""
+    return _as_int(
+        config.get_value(const.CONF_LATENCY_MS),
+        const.DEFAULT_LATENCY_MS,
+        const.MIN_LATENCY_MS,
+        const.MAX_LATENCY_MS,
+    )
+
+
+def get_send_rate_hz(config: ProviderConfig) -> int:
+    """Return the configured per-light send rate cap (sends/second)."""
+    return _as_int(
+        config.get_value(const.CONF_SEND_RATE_HZ),
+        const.DEFAULT_SEND_RATE_HZ,
+        const.MIN_SEND_RATE_HZ,
+        const.MAX_SEND_RATE_HZ,
+    )
+
+
+# -- Bundled settings object -------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -58,7 +131,7 @@ class PluginSettings:
 
     @property
     def ha_configured(self) -> bool:
-        """True when both a Home Assistant URL and token are present."""
+        """True when both a direct Home Assistant URL and token are present."""
         return bool(self.ha_url and self.ha_token)
 
     @classmethod
@@ -99,27 +172,29 @@ class PluginSettings:
         )
 
     @classmethod
-    def from_config_getter(cls, getter: Any) -> "PluginSettings":
-        """Build settings from a Music Assistant ``config.get_value`` callable.
+    def from_config(cls, config: ProviderConfig) -> "PluginSettings":
+        """Build settings from a Music Assistant ``ProviderConfig``.
 
-        ``getter`` is called once per known key; any exception it raises for
-        a key is treated as "not set" so a partial config still resolves.
+        Uses the Hue-style readers above (``config.get_value`` per key).
         """
-        values: dict[str, Any] = {}
-        for key in (
-            const.CONF_DISCOVERY_SOURCE,
-            const.CONF_HA_URL,
-            const.CONF_HA_TOKEN,
-            const.CONF_BRIGHTNESS,
-            const.CONF_COLOR_MODE,
-            const.CONF_LATENCY_MS,
-            const.CONF_SEND_RATE_HZ,
-        ):
-            try:
-                values[key] = getter(key)
-            except Exception:  # noqa: BLE001 - config access must not crash setup
-                values[key] = None
-        return cls.from_mapping(values)
+        return cls(
+            discovery_source=get_discovery_source(config),
+            ha_url=get_ha_url(config),
+            ha_token=get_ha_token(config),
+            brightness_percent=get_brightness(config),
+            color_mode=get_color_mode(config),
+            latency_ms=get_latency_ms(config),
+            send_rate_hz=get_send_rate_hz(config),
+        )
 
 
-__all__ = ["PluginSettings"]
+__all__ = [
+    "PluginSettings",
+    "get_brightness",
+    "get_color_mode",
+    "get_discovery_source",
+    "get_ha_token",
+    "get_ha_url",
+    "get_latency_ms",
+    "get_send_rate_hz",
+]

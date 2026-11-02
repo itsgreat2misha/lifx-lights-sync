@@ -204,6 +204,18 @@ class LifxAudioAnalyzer:
         """
         self._onset_us = int(timestamp_us)
 
+    def clear_beat_schedule(self) -> None:
+        """Drop all queued beats (a track change re-pushes a fresh schedule)."""
+        self._beats.clear()
+        self._last_beat_us = None
+        self._last_pulse_us = None
+
+    def clear_queues(self) -> None:
+        """Drop queued spectrum/peak data (seek: pre-seek audio is stale)."""
+        self._spectrum.clear()
+        self._peaks.clear()
+        self._onset_us = None
+
     # -- internals ---------------------------------------------------------
 
     def _prune(self, now_us: int) -> None:

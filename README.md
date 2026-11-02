@@ -39,18 +39,29 @@ Sendspin player or group, and the lights start reacting.
 
 ## How discovery works
 
+The preferred path borrows Music Assistant's *own* Home Assistant
+connection: MA's `hass` provider already holds an authenticated HA
+WebSocket client, and this plugin reads the registries through its
+public methods plus `config_entries/get` through its generic command
+sender — the same pattern AI Radio uses for HA-backed engines. **With
+the hass provider configured, no HA credentials are entered in this
+plugin at all.** A direct HA URL + long-lived token is the alternative
+when the hass provider is not configured.
+
 ```
-                  Home Assistant (WebSocket API)
-                  ┌─────────────────────────────────────────┐
-   configured ──► │ config_entries/get (domain=lifx)         │
-   HA URL +      │   -> data.host + data.serial  [PRIMARY IP│
-   token         │ config/device_registry/list              │
-                  │   -> name, manufacturer, identifiers     │
-                  │ config/entity_registry/list              │
-                  │   -> bound light.* entity_ids            │
-                  │ config/area_registry/list                │
-                  │   -> area names                          │
-                  └─────────────────────────────────────────┘
+   preferred ───► MA hass provider (already connected to HA)
+                  get_device_registry() / get_area_registry()
+                  get_entity_registry()          [names/areas/entities]
+                  hass.send_command("config_entries/get")
+                      -> data.host + data.serial  [PRIMARY IP SOURCE]
+
+   alternative ─► Home Assistant directly (URL + token, WebSocket API)
+                  config/device_registry/list
+                  config/entity_registry/list
+                  config/area_registry/list
+                  config_entries/get
+                      -> same data as above
+
                       │                    │
                       │ names/areas/IPs    │ no host for some lights,
                       ▼                    │ or HA absent/unreachable
@@ -78,9 +89,12 @@ Key facts that shape this design:
   for the same serial. LAN discovery then fills in lights whose HA
   entry has no host, cross-checks the rest, and supplies matrix
   geometry (which HA never exposes).
-- When HA is absent or unreachable and the source is not `ha`,
+- When HA is absent or unreachable and the source is not `ha`/`hass`,
   LAN-only mode works on its own: bulbs group under one
   "LIFX Lights" target, matrix lights still get individual targets.
+- The hass provider is an *optional* source, never a manifest
+  dependency: `depends_on` stays `sendspin` only, and `auto` mode
+  simply skips the hass step when no instance is loaded.
 
 ### Sync targets
 
@@ -104,9 +118,11 @@ yet.
 2. Restart the Music Assistant server / custom-loader add-on.
 3. In Music Assistant, go to **Settings → Plugins → Add a plugin** and
    select **LIFX Lights Sync**.
-4. If you use Home Assistant discovery, add your HA URL and a
-   long-lived access token (profile → Security → Long-lived access
-   tokens; read-only registry access is all it needs).
+4. If Music Assistant's Home Assistant provider is configured, you
+   are done — discovery borrows its connection. Only if it is *not*
+   configured, add your HA URL and a long-lived access token in this
+   plugin's settings (profile → Security → Long-lived access tokens;
+   read-only registry access is all it needs).
 5. Each discovered target appears as a LIGHT player. Join it to any
    Sendspin player or group that is playing.
 
@@ -114,9 +130,9 @@ yet.
 
 | Setting | Key | Default | Notes |
 | ------- | --- | ------- | ----- |
-| Discovery source | `discovery_source` | `auto` | `auto` = HA first, LAN fallback; `ha` = HA lights only (LAN fills IP gaps); `lan` = LAN only |
-| Home Assistant URL | `ha_url` | — | Base URL, e.g. `http://homeassistant.local:8123` |
-| Home Assistant token | `ha_token` | — | Long-lived access token (stored as a secret) |
+| Discovery source | `discovery_source` | `auto` | `auto` = MA hass provider → direct HA (if configured) → LAN; `hass` = MA's HA provider only; `ha` = direct HA only (LAN fills IP gaps in both HA modes); `lan` = LAN only |
+| Home Assistant URL | `ha_url` | — | Base URL, e.g. `http://homeassistant.local:8123`. Only needed when MA's Home Assistant provider is not configured |
+| Home Assistant token | `ha_token` | — | Long-lived access token (stored as a secret). Same condition as above — with the hass provider configured, no HA credentials are entered in this plugin at all |
 | Brightness (%) | `brightness` | 80 | Cap on effect brightness |
 | Color mode | `color_mode` | `smooth` | `smooth` / `ambient` / `flashing` / `energetic` |
 | Latency compensation (ms) | `latency_ms` | 0 | Shifts render time for speaker/network latency |
@@ -130,9 +146,8 @@ take effect on the next provider load.
 
 ```
 lifx_lights_sync/
-├── __init__.py      Plugin entry point; lazily imports the provider
-│                    in an executor thread (Hue pattern). Import-light:
-│                    importing this package must not require MA.
+├── __init__.py      Plugin entry point; setup() lazily imports the
+│                    provider (exact installed Hue pattern).
 ├── manifest.json    Plugin manifest (domain, deps, requirements).
 ├── strings.json     Config entry labels/help for the MA UI.
 ├── icon.svg / icon_dark.svg
@@ -143,6 +158,9 @@ lifx_lights_sync/
 │                    one LightColorCommand per channel, per mode preset.
 ├── discovery.py     HA registries + config entries, LAN discovery
 │                    (lifx-async), serial normalization, target merge.
+├── ha_via_mass.py   HA discovery via MA's own hass provider
+│                    (registries + config_entries/get over its
+│                    existing connection; duck-typed, no MA imports).
 ├── lifx_output.py   LifxSender: snapshot / restore / rate-limited
 │                    bulb and matrix writes via lifx-async.
 ├── bridge.py        Sendspin bridge manager + per-target bridge:
@@ -171,15 +189,19 @@ python3 -m json.tool lifx_lights_sync/strings.json > /dev/null
 
 To try the LIFX output path against real hardware you need a Music
 Assistant instance with the Sendspin provider enabled, `lifx-async`
-installed, and LIFX lights on the LAN; see the `TODO(live-verify)`
-markers in `bridge.py`, `provider.py` and `lifx_output.py` for the
-exact call sites that still need a first live run.
+installed, and LIFX lights on the LAN. The Music Assistant / Sendspin
+call shapes in `bridge.py` and `provider.py` were aligned against the
+installed Music Assistant source and import-verified in the live
+container; the remaining `TODO(live-verify)` markers are all in
+`discovery.py` / `lifx_output.py` (lifx-async device semantics that
+only a run against real lights can confirm).
 
 ## Roadmap
 
-- [ ] First live run against Music Assistant: confirm the exact
-      Sendspin bridge registration, role callback and player-removal
-      call shapes (`TODO(live-verify)` in `bridge.py` / `provider.py`).
+- [ ] First live run in Music Assistant: add the provider instance in
+      the UI and confirm end-to-end streaming (registration, role
+      callbacks and player removal are aligned to the installed
+      source; lifx-async output semantics remain `TODO(live-verify)`).
 - [ ] Measure sustained frame rate on a 16 x 8 ceiling and, if needed,
       switch matrix writes to the lifx-async `Animator` fast path
       (`device.animator.prepare()` + synchronous `send_frame()`).

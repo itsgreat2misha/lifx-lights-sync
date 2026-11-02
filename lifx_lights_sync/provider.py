@@ -1,259 +1,235 @@
-"""Music Assistant provider for LIFX Lights Sync.
+"""
+LIFX Lights Sync provider for Music Assistant.
 
-Modeled on the Hue Lights Sync provider
-(``music-assistant/server`` providers/hue_entertainment/provider.py
-@73c3e59): a PluginProvider that owns a bridge manager, exposes its
-configuration through ``get_config_entries``, and live-applies safe
-settings in ``update_config``.
+Discovers LIFX lights and creates virtual Sendspin LIGHT players for
+each sync target (one per Home Assistant area, plus one per matrix /
+ceiling light). When music plays to a virtual player, the lights in
+that target react to the music.
 
-Lifecycle:
-- ``loaded_in_mass()`` runs discovery (Home Assistant first in ``auto``
-  mode, LAN fallback / IP resolution), builds sync targets and hands
-  them to the bridge manager, which registers one virtual LIGHT player
-  per target with the Sendspin provider;
-- ``update_config()`` re-reads the config and pushes brightness, color
-  mode, latency and send rate into the running bridges;
-- ``unload()`` stops all bridges (restoring light state) and closes
-  the LIFX device connections.
+Modeled on the installed Hue Lights Sync provider
+(``music_assistant.providers.hue_entertainment.provider``): provider
+shape, config-entry style and the ``update_config`` live-apply pattern
+follow it directly, aligned against the installed Music Assistant
+version (music_assistant_models imports, ``ConfigEntryType``,
+``PluginProvider`` from ``music_assistant.models.plugin``).
 
-The Music Assistant imports below follow the Hue provider; individual
-names are marked ``# TODO(live-verify)`` where the exact module path
-could not be confirmed offline.
+Discovery order for source ``auto`` (the default):
+1. Music Assistant's own Home Assistant provider (``hass``), if a
+   loaded/available instance exists — it already holds an
+   authenticated HA connection, so this plugin needs no HA credentials
+   of its own in the common case (see ``ha_via_mass``);
+2. a direct Home Assistant URL + long-lived token, if configured;
+3. LAN discovery (lifx-async), which also runs in the HA modes as a
+   gap-filler for lights without an HA host and as the source of
+   matrix geometry.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-# TODO(live-verify): these module paths mirror hue_entertainment
-# @73c3e59 / current music-assistant/server; confirm on first live load.
-# Fallback chains are kept so a moved module degrades to a clear import
-# error naming the last attempted path, not a silent wrong class.
-try:
-    from music_assistant.common.models.config_entries import (  # type: ignore[import-not-found]
-        ConfigEntry,
-        ConfigValueOption,
-        ConfigValueType,
-    )
-except ImportError:  # older layout
-    from music_assistant.models.config_entries import (  # type: ignore[import-not-found]
-        ConfigEntry,
-        ConfigValueOption,
-        ConfigValueType,
-    )
+from music_assistant_models.config_entries import ConfigEntry, ConfigValueOption
+from music_assistant_models.enums import ConfigEntryType
 
-try:
-    from music_assistant.common.models.provider import (  # type: ignore[import-not-found]
-        PluginProvider,
-    )
-except ImportError:
-    try:
-        from music_assistant.server.models.provider import (  # type: ignore[import-not-found]
-            PluginProvider,
-        )
-    except ImportError:
-        from music_assistant.models.provider import (  # type: ignore[import-not-found]
-            PluginProvider,
-        )
+from music_assistant.models.plugin import PluginProvider
 
 from . import constants as const
 from .bridge import LifxBridgeManager
 from .discovery import (
+    HaDiscoveryError,
     HaLifxLight,
     discover_lan,
     fetch_ha_lifx_lights,
     merge_targets,
 )
+from .ha_via_mass import fetch_ha_via_hass_provider
 from .lifx_output import open_devices
 from .settings import PluginSettings
 
+if TYPE_CHECKING:
+    from music_assistant_models.config_entries import ProviderConfig
+    from music_assistant_models.enums import ProviderFeature
+    from music_assistant_models.provider import ProviderManifest
+
+    from music_assistant.mass import MusicAssistant
+
 _LOGGER = logging.getLogger(__name__)
 
-
-def _secret_config_value_type() -> Any:
-    """Return the password-style config type if MA supports it."""
-    # ConfigValueType.SECRET_STRING is the secret type used by other MA
-    # providers for tokens/passwords; fall back to a plain string entry.
-    return getattr(ConfigValueType, "SECRET_STRING", ConfigValueType.STRING)
+# Config keys that can be applied to running bridges without a reload.
+_LIVE_SETTING_KEYS = (
+    const.CONF_BRIGHTNESS,
+    const.CONF_COLOR_MODE,
+    const.CONF_LATENCY_MS,
+    const.CONF_SEND_RATE_HZ,
+)
 
 
 class LifxLightsSyncProvider(PluginProvider):
-    """Plugin provider syncing LIFX lights to the Sendspin visualizer."""
+    """Provider that syncs LIFX lights to music via Sendspin."""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._settings = PluginSettings()
-        self._manager: LifxBridgeManager | None = None
-        self._devices: dict[str, Any] = {}
-
-    # -- configuration -------------------------------------------------------
-
-    async def get_config_entries(
+    def __init__(
         self,
-        action: str | None = None,
-        values: dict[str, Any] | None = None,
-    ) -> tuple[ConfigEntry, ...]:
-        """Return the plugin's config entries (mirrors the Hue plugin)."""
+        mass: MusicAssistant,
+        manifest: ProviderManifest,
+        config: ProviderConfig,
+        supported_features: set[ProviderFeature],
+    ) -> None:
+        """Initialize the provider."""
+        super().__init__(mass, manifest, config, supported_features)
+        self._bridge_manager: LifxBridgeManager | None = None
+        self._devices: dict[str, Any] = {}
+        self._settings = PluginSettings.from_config(config)
+
+    @property
+    def settings(self) -> PluginSettings:
+        """Return the current resolved plugin settings."""
+        return self._settings
+
+    async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
+        """
+        Return the (options) config entries for the LIFX Lights Sync provider.
+
+        There is no setup flow: discovery needs no pairing. When Music
+        Assistant's Home Assistant provider is configured, no HA
+        credentials are entered here at all — the HA URL/token entries
+        below are only for the direct-connection fallback.
+        """
         return (
             ConfigEntry(
                 key=const.CONF_DISCOVERY_SOURCE,
-                type=ConfigValueType.STRING,
-                label="Discovery source",
-                description=(
-                    "Where to find your LIFX lights. 'auto' asks Home "
-                    "Assistant first (names and areas) and uses the LAN "
-                    "to find IP addresses; 'ha' uses only lights known "
-                    "to Home Assistant; 'lan' ignores Home Assistant."
-                ),
+                type=ConfigEntryType.STRING,
                 default_value=const.DEFAULT_DISCOVERY_SOURCE,
                 options=[
-                    ConfigValueOption("Auto (Home Assistant first)", const.SOURCE_AUTO),
-                    ConfigValueOption("Home Assistant only", const.SOURCE_HA),
-                    ConfigValueOption("LAN only", const.SOURCE_LAN),
+                    ConfigValueOption(const.SOURCE_AUTO, "Auto"),
+                    ConfigValueOption(const.SOURCE_HASS, "Music Assistant's Home Assistant provider"),
+                    ConfigValueOption(const.SOURCE_HA, "Home Assistant (direct URL + token)"),
+                    ConfigValueOption(const.SOURCE_LAN, "LAN only"),
                 ],
-                required=True,
+                category="settings",
             ),
             ConfigEntry(
                 key=const.CONF_HA_URL,
-                type=ConfigValueType.STRING,
-                label="Home Assistant URL",
-                description=(
-                    "Base URL of your Home Assistant instance, "
-                    "e.g. http://homeassistant.local:8123"
-                ),
+                type=ConfigEntryType.STRING,
                 default_value=const.DEFAULT_HA_URL,
-                depends_on=const.CONF_DISCOVERY_SOURCE,
-                depends_on_value=const.SOURCE_AUTO,
+                required=False,
+                category="settings",
             ),
             ConfigEntry(
                 key=const.CONF_HA_TOKEN,
-                type=_secret_config_value_type(),
-                label="Home Assistant long-lived access token",
-                description=(
-                    "Created in Home Assistant under your profile -> "
-                    "Security -> Long-lived access tokens. Used read-only "
-                    "to list LIFX devices, entities and areas."
-                ),
+                type=ConfigEntryType.SECURE_STRING,
                 default_value=const.DEFAULT_HA_TOKEN,
+                required=False,
+                category="settings",
             ),
             ConfigEntry(
                 key=const.CONF_BRIGHTNESS,
-                type=ConfigValueType.INTEGER,
-                label="Brightness (%)",
-                description="Maximum brightness of the sync effect, in percent.",
+                type=ConfigEntryType.INTEGER,
                 default_value=const.DEFAULT_BRIGHTNESS,
                 range=(const.MIN_BRIGHTNESS, const.MAX_BRIGHTNESS),
+                category="settings",
             ),
             ConfigEntry(
                 key=const.CONF_COLOR_MODE,
-                type=ConfigValueType.STRING,
-                label="Color mode",
-                description="Visualizer style applied to the lights.",
+                type=ConfigEntryType.STRING,
                 default_value=const.DEFAULT_COLOR_MODE,
                 options=[
-                    ConfigValueOption("Smooth", const.MODE_SMOOTH),
-                    ConfigValueOption("Ambient", const.MODE_AMBIENT),
-                    ConfigValueOption("Flashing", const.MODE_FLASHING),
-                    ConfigValueOption("Energetic", const.MODE_ENERGETIC),
+                    ConfigValueOption(mode, title=mode.capitalize())
+                    for mode in const.COLOR_MODES
                 ],
-                required=True,
+                category="settings",
             ),
             ConfigEntry(
                 key=const.CONF_LATENCY_MS,
-                type=ConfigValueType.INTEGER,
-                label="Latency compensation (ms)",
-                description=(
-                    "Shift the visualizer render time to compensate for "
-                    "speaker/network latency."
-                ),
+                type=ConfigEntryType.INTEGER,
                 default_value=const.DEFAULT_LATENCY_MS,
                 range=(const.MIN_LATENCY_MS, const.MAX_LATENCY_MS),
+                immediate_apply=True,
+                category="settings",
             ),
             ConfigEntry(
                 key=const.CONF_SEND_RATE_HZ,
-                type=ConfigValueType.INTEGER,
-                label="Max sends per second (per light)",
-                description=(
-                    "Rate limit for color updates sent to each LIFX light."
-                ),
+                type=ConfigEntryType.INTEGER,
                 default_value=const.DEFAULT_SEND_RATE_HZ,
                 range=(const.MIN_SEND_RATE_HZ, const.MAX_SEND_RATE_HZ),
+                immediate_apply=True,
+                category="settings",
             ),
         )
 
-    def _read_settings(self) -> PluginSettings:
-        config = getattr(self, "config", None)
-        getter = getattr(config, "get_value", None)
-        if callable(getter):
-            return PluginSettings.from_config_getter(getter)
-        # TODO(live-verify): Provider.config.get_value is the accessor in
-        # current MA; this fallback covers a plain mapping config.
-        if isinstance(config, dict):
-            return PluginSettings.from_mapping(config)
-        return PluginSettings()
-
-    # -- lifecycle -------------------------------------------------------------
-
     async def loaded_in_mass(self) -> None:
-        """Discover lights and register all sync targets."""
-        self._settings = self._read_settings()
+        """Discover lights and set up sync-target bridges."""
+        self._settings = PluginSettings.from_config(self.config)
         settings = self._settings
+        source = settings.discovery_source
 
         ha_lights: list[HaLifxLight] = []
-        want_ha = settings.discovery_source in (const.SOURCE_AUTO, const.SOURCE_HA)
-        if want_ha and settings.ha_configured:
+        ha_source_used: str | None = None
+
+        # 1. Music Assistant's own Home Assistant provider (preferred:
+        #    it already holds an authenticated HA connection).
+        if source in (const.SOURCE_AUTO, const.SOURCE_HASS):
+            ha_lights, ha_source_used = await self._discover_via_hass_provider(
+                required=source == const.SOURCE_HASS
+            )
+
+        # 2. Direct Home Assistant URL + token (only if configured and
+        #    step 1 produced nothing).
+        if (
+            not ha_lights
+            and source in (const.SOURCE_AUTO, const.SOURCE_HA)
+            and settings.ha_configured
+        ):
             try:
                 ha_lights = await fetch_ha_lifx_lights(
                     settings.ha_url, settings.ha_token
                 )
-                _LOGGER.info(
-                    "LIFX Lights Sync: Home Assistant reported %d LIFX lights",
+                ha_source_used = "direct Home Assistant connection"
+                self.logger.info(
+                    "Home Assistant reported %d LIFX lights (direct connection)",
                     len(ha_lights),
                 )
             except Exception as err:  # noqa: BLE001
-                if settings.discovery_source == const.SOURCE_HA:
-                    _LOGGER.error(
-                        "LIFX Lights Sync: Home Assistant discovery failed: %s", err
-                    )
+                if source == const.SOURCE_HA:
+                    self.logger.error("Home Assistant discovery failed: %s", err)
                 else:
-                    _LOGGER.warning(
-                        "LIFX Lights Sync: Home Assistant discovery failed "
-                        "(%s); falling back to LAN discovery",
+                    self.logger.warning(
+                        "Home Assistant discovery failed (%s); "
+                        "falling back to LAN discovery",
                         err,
                     )
-        elif want_ha:
-            _LOGGER.info(
-                "LIFX Lights Sync: no Home Assistant URL/token configured; "
-                "using LAN discovery"
+        elif source in (const.SOURCE_AUTO, const.SOURCE_HA) and not ha_lights:
+            self.logger.debug(
+                "No direct Home Assistant URL/token configured; skipping direct HA discovery"
             )
 
-        # LAN discovery in HA modes is a gap-filler / cross-check, not
-        # the primary resolver: HA config entries already provided a
-        # host for most lights (see discovery.fetch_ha_lifx_lights).
-        # The LAN sweep fills in lights whose HA entry lacks a host and
-        # supplies matrix geometry. In lan/auto-without-HA modes it is
-        # the only source.
+        # 3. LAN discovery: the only source in lan mode; in the HA modes
+        #    a gap-filler (lights whose HA entry lacks a host), a
+        #    cross-check, and the source of matrix geometry.
         lan_devices = []
-        if settings.discovery_source != const.SOURCE_HA or ha_lights:
+        if source not in (const.SOURCE_HA, const.SOURCE_HASS) or ha_lights:
             try:
                 lan_devices = await discover_lan()
             except Exception:  # noqa: BLE001
-                _LOGGER.warning(
-                    "LIFX Lights Sync: LAN discovery failed", exc_info=True
-                )
-        _LOGGER.info(
-            "LIFX Lights Sync: LAN discovery found %d devices", len(lan_devices)
-        )
+                self.logger.warning("LAN discovery failed", exc_info=True)
+            self.logger.info("LAN discovery found %d devices", len(lan_devices))
 
         targets = merge_targets(
             ha_lights,
             lan_devices,
-            include_lan_only=settings.discovery_source != const.SOURCE_HA,
+            include_lan_only=source not in (const.SOURCE_HA, const.SOURCE_HASS),
         )
         if not targets:
-            _LOGGER.warning("LIFX Lights Sync: no sync targets discovered")
+            self.logger.warning("No LIFX sync targets discovered")
+            self.available = False
             return
+
+        self.logger.info(
+            "Discovery complete via %s: %d sync target(s): %s",
+            ha_source_used or "LAN only",
+            len(targets),
+            ", ".join(target.name for target in targets),
+        )
 
         # Resolved IPs already encode the precedence (HA host > LAN).
         ip_by_serial = {
@@ -265,57 +241,78 @@ class LifxLightsSyncProvider(PluginProvider):
         try:
             self._devices = await open_devices(ip_by_serial)
         except Exception:  # noqa: BLE001
-            _LOGGER.warning(
-                "LIFX Lights Sync: could not open LIFX devices", exc_info=True
-            )
+            self.logger.warning("Could not open LIFX devices", exc_info=True)
             self._devices = {}
 
-        self._manager = LifxBridgeManager(self.mass, settings)
-        bridges = await self._manager.setup(targets, self._devices)
-        _LOGGER.info(
-            "LIFX Lights Sync: registered %d sync targets: %s",
-            len(bridges),
-            ", ".join(bridge.target.name for bridge in bridges),
-        )
+        self._bridge_manager = LifxBridgeManager(self)
+        await self._bridge_manager.setup_bridges(targets, self._devices)
+        self.available = bool(self._bridge_manager.bridges)
 
-    async def update_config(
-        self, config: dict[str, Any] | None = None
-    ) -> None:
-        """Live-apply updated config values to the running bridges."""
-        # TODO(live-verify): update_config's exact signature in current
-        # MA (called with the new values dict by the config controller);
-        # we re-read through the standard accessor when possible.
-        if config:
-            merged = {
-                key: getattr(self._settings, field_name)
-                for key, field_name in (
-                    (const.CONF_DISCOVERY_SOURCE, "discovery_source"),
-                    (const.CONF_HA_URL, "ha_url"),
-                    (const.CONF_HA_TOKEN, "ha_token"),
-                    (const.CONF_BRIGHTNESS, "brightness_percent"),
-                    (const.CONF_COLOR_MODE, "color_mode"),
-                    (const.CONF_LATENCY_MS, "latency_ms"),
-                    (const.CONF_SEND_RATE_HZ, "send_rate_hz"),
+    async def _discover_via_hass_provider(
+        self, required: bool
+    ) -> tuple[list[HaLifxLight], str | None]:
+        """Try discovery through MA's hass provider; never raises."""
+        hass_provider: Any = None
+        try:
+            hass_provider = self.mass.get_provider("hass")
+        except Exception:  # noqa: BLE001 - provider lookup must not crash load
+            hass_provider = None
+        if hass_provider is None:
+            msg = "Music Assistant's Home Assistant provider is not loaded"
+            if required:
+                self.logger.error("%s; no lights will be discovered from HA", msg)
+            else:
+                self.logger.debug("%s; trying the next discovery source", msg)
+            return [], None
+        try:
+            lights = await fetch_ha_via_hass_provider(hass_provider)
+        except HaDiscoveryError as err:
+            if required:
+                self.logger.error("HA discovery via the hass provider failed: %s", err)
+            else:
+                self.logger.warning(
+                    "HA discovery via the hass provider failed (%s); "
+                    "trying the next discovery source",
+                    err,
                 )
-            }
-            merged.update(config)
-            self._settings = PluginSettings.from_mapping(merged)
-        else:
-            self._settings = self._read_settings()
-        if self._manager is not None:
-            self._manager.update_settings(self._settings)
+            return [], None
+        self.logger.info(
+            "Home Assistant reported %d LIFX lights (via MA's hass provider)",
+            len(lights),
+        )
+        return lights, "Music Assistant's Home Assistant provider"
 
     async def unload(self, is_removed: bool = False) -> None:
-        """Stop all bridges (restoring lights) and close devices."""
-        if self._manager is not None:
-            await self._manager.unload()
-            self._manager = None
+        """Handle unload/close of the provider."""
+        if self._bridge_manager:
+            await self._bridge_manager.stop_all()
+            self._bridge_manager = None
         for device in self._devices.values():
             try:
                 await device.close()
             except Exception:  # noqa: BLE001
-                _LOGGER.debug("Error closing LIFX device", exc_info=True)
+                self.logger.debug("Error closing LIFX device", exc_info=True)
         self._devices = {}
+
+    async def update_config(self, config: ProviderConfig, changed_keys: set[str]) -> None:
+        """
+        Handle config changes.
+
+        Playback settings (brightness, color mode, latency, send rate)
+        are applied to the running bridges in place; anything else
+        (discovery source, HA connection, log level) goes through the
+        base implementation, which reloads the provider.
+        """
+        # changed_keys arrive namespaced as 'values/<key>'; only skip
+        # the reload when every changed key can be applied in place.
+        settings_keys = {f"values/{key}" for key in _LIVE_SETTING_KEYS}
+        if changed_keys and changed_keys <= settings_keys and self._bridge_manager:
+            self._settings = PluginSettings.from_config(config)
+            self._bridge_manager.update_settings(self._settings)
+            self.config = config
+            return
+
+        await super().update_config(config, changed_keys)
 
 
 __all__ = ["LifxLightsSyncProvider"]

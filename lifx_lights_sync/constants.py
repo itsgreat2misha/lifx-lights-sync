@@ -18,10 +18,11 @@ CONF_LATENCY_MS = "latency_ms"
 CONF_SEND_RATE_HZ = "send_rate_hz"
 
 # --- Discovery sources ---
-SOURCE_AUTO = "auto"  # Home Assistant first, LAN for IPs + fallback
-SOURCE_HA = "ha"  # Home Assistant defines the lights; LAN only resolves IPs
+SOURCE_AUTO = "auto"  # MA hass provider, then direct HA, then LAN
+SOURCE_HASS = "hass"  # Music Assistant's own Home Assistant provider only
+SOURCE_HA = "ha"  # Direct Home Assistant URL+token only
 SOURCE_LAN = "lan"  # LAN only, no Home Assistant involved
-DISCOVERY_SOURCES = (SOURCE_AUTO, SOURCE_HA, SOURCE_LAN)
+DISCOVERY_SOURCES = (SOURCE_AUTO, SOURCE_HASS, SOURCE_HA, SOURCE_LAN)
 DEFAULT_DISCOVERY_SOURCE = SOURCE_AUTO
 
 # --- Defaults ---
@@ -121,6 +122,7 @@ __all__ = [
     "RENDER_FPS",
     "SOURCE_AUTO",
     "SOURCE_HA",
+    "SOURCE_HASS",
     "SOURCE_LAN",
     "SPECTRUM_F_MAX",
     "SPECTRUM_F_MIN",

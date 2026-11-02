@@ -1,61 +1,40 @@
-"""LIFX Lights Sync plugin for Music Assistant.
+"""
+LIFX Lights Sync Plugin for Music Assistant.
 
-Syncs LIFX lights to music using the Sendspin visualizer stream, modeled
-on the built-in Hue Lights Sync plugin (hue_entertainment).
+Syncs LIFX lights to music using the Sendspin visualization pipeline —
+each sync target (a Home Assistant area, or a single matrix/ceiling
+light) appears as a virtual LIGHT player in Music Assistant. Playing
+music to the player makes the lights react to the music in real time.
 
-This module is intentionally import-light: it must be importable without
-Music Assistant installed (the unit tests rely on that, and Music
-Assistant itself imports the package before calling :func:`setup`).
-The provider class is therefore imported lazily, in an executor thread,
-inside :func:`setup` — the same pattern the Hue plugin uses.
+Modeled on the built-in Hue Lights Sync plugin (hue_entertainment);
+this module follows its exact shape for the installed Music Assistant
+version.
 """
 
 from __future__ import annotations
 
-import asyncio
-from typing import TYPE_CHECKING, Any
+import logging
+from typing import TYPE_CHECKING
+
+LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from music_assistant.common.models.provider import Provider
-    from music_assistant.server import MusicAssistant
-    from music_assistant.server.models.provider import ProviderManifest
+    from music_assistant_models.config_entries import ProviderConfig
+    from music_assistant_models.enums import ProviderFeature
+    from music_assistant_models.provider import ProviderManifest
 
-# A plugin provider exposes no extra player/music features of its own;
-# the LIGHT players it registers come from the Sendspin provider.
-SUPPORTED_FEATURES: set = set()
+    from music_assistant.mass import MusicAssistant
+    from music_assistant.models import ProviderInstanceType
 
-
-def _import_provider_class() -> type:
-    from .provider import LifxLightsSyncProvider
-
-    return LifxLightsSyncProvider
+SUPPORTED_FEATURES: set[ProviderFeature] = set()
 
 
 async def setup(
-    mass: "MusicAssistant", manifest: "ProviderManifest", config: Any
-) -> "Provider":
-    """Initialize the provider instance (called by Music Assistant)."""
-    loop = asyncio.get_running_loop()
-    provider_class = await loop.run_in_executor(None, _import_provider_class)
-    return provider_class(mass, manifest, config)
+    mass: MusicAssistant,
+    manifest: ProviderManifest,
+    config: ProviderConfig,
+) -> ProviderInstanceType:
+    """Initialize provider(instance) with given configuration."""
+    from .provider import LifxLightsSyncProvider  # noqa: PLC0415
 
-
-async def get_config_entries(
-    mass: "MusicAssistant",
-    instance_id: str | None = None,
-    action: str | None = None,
-    values: dict[str, Any] | None = None,
-) -> tuple:
-    """Return the config entries without instantiating the provider."""
-    loop = asyncio.get_running_loop()
-    provider_class = await loop.run_in_executor(None, _import_provider_class)
-    # The Hue plugin delegates to an unbound helper on the provider class;
-    # our entries are instance-independent, so build them on a bare
-    # instance-free call through the class's static construction path.
-    # TODO(live-verify): confirm MA calls the module-level
-    # get_config_entries with this signature for plugin providers.
-    provider = object.__new__(provider_class)
-    return await provider_class.get_config_entries(provider, action, values)
-
-
-__all__ = ["SUPPORTED_FEATURES", "get_config_entries", "setup"]
+    return LifxLightsSyncProvider(mass, manifest, config, SUPPORTED_FEATURES)
