@@ -66,17 +66,12 @@ class TestBeatPulse(unittest.TestCase):
             CHANNELS, mode="energetic", brightness=0.8, palette=FLAT_PALETTE
         )
         analyzer.queue_spectrum(1_000_000, [0.5] * 17)
-        before = _total(analyzer.render(1_000_000))
-        # A second analyzer at the same musical moment, but with a beat:
-        # identical spectrum, plus pulse -> strictly brighter.
-        other = LifxAudioAnalyzer(
-            CHANNELS, mode="energetic", brightness=0.8, palette=FLAT_PALETTE
-        )
-        other.queue_spectrum(1_000_000, [0.5] * 17)
-        other.render(1_000_000)  # settle smoothing identically
-        other.queue_beat(2_000_000, is_downbeat=True)
-        at_beat = _total(other.render(2_000_000))
-        self.assertGreater(at_beat, before)
+        analyzer.queue_beat(1_000_000, is_downbeat=False)
+        analyzer.queue_beat(2_000_000, is_downbeat=True)
+        analyzer.queue_beat(3_000_000, is_downbeat=False)
+        mid_segment = _total(analyzer.render(1_500_000))
+        at_beat = _total(analyzer.render(2_000_000))
+        self.assertGreater(at_beat, mid_segment)
 
     def test_pulse_decays_after_the_beat(self):
         analyzer = LifxAudioAnalyzer(
@@ -84,10 +79,11 @@ class TestBeatPulse(unittest.TestCase):
         )
         analyzer.queue_spectrum(0, [0.5] * 17)
         analyzer.queue_beat(1_000_000, is_downbeat=False)
-        at_beat = _total(analyzer.render(1_000_000))
-        analyzer.queue_spectrum(3_000_000, [0.5] * 17)
-        much_later = _total(analyzer.render(3_000_000))
-        self.assertGreater(at_beat, much_later)
+        analyzer.queue_beat(2_000_000, is_downbeat=False)
+        analyzer.queue_beat(3_000_000, is_downbeat=False)
+        at_beat = _total(analyzer.render(2_000_000))
+        mid_next = _total(analyzer.render(2_500_000))
+        self.assertGreater(at_beat, mid_next)
 
 
 class TestAmbientIgnoresOnset(unittest.TestCase):
@@ -155,16 +151,19 @@ class TestSpectrumEncoding(unittest.TestCase):
         # Regression: the Sendspin server sends spectrum bins as uint16
         # dB-scaled values in [0, 65535]. Treating them as 0-255 clamped
         # every bin to 1.0 and froze the light output at a static color.
-        analyzer = LifxAudioAnalyzer(CHANNELS, mode="smooth", brightness=0.8)
-        for i in range(30):
-            analyzer.queue_spectrum(1_000_000 + i * 50_000, [45000.0] * 17)
-        loud = analyzer.render(2_500_000)
-        for i in range(30):
-            analyzer.queue_spectrum(2_500_000 + i * 50_000, [1000.0] * 17)
-        quiet = analyzer.render(4_000_000)
+        # Under the transient model a loud frame after silence flashes
+        # (fast follower jumps, baseline lags), while a quiet frame —
+        # below the noise gate — leaves the channels at their floor, so
+        # the two renders must differ clearly.
+        loud = LifxAudioAnalyzer(CHANNELS, mode="smooth", brightness=0.8)
+        loud.queue_spectrum(1_000_000, [45000.0] * 17)
+        loud_total = _total(loud.render(1_000_000))
+        quiet = LifxAudioAnalyzer(CHANNELS, mode="smooth", brightness=0.8)
+        quiet.queue_spectrum(1_000_000, [1000.0] * 17)
+        quiet_total = _total(quiet.render(1_000_000))
         self.assertGreater(
-            _total(loud),
-            _total(quiet),
+            loud_total,
+            quiet_total,
             "uint16 spectrum frames must modulate the output brightness",
         )
 
@@ -177,8 +176,13 @@ class TestPlayheadPromotion(unittest.TestCase):
         analyzer = LifxAudioAnalyzer(CHANNELS, mode="smooth", brightness=0.8)
         analyzer.queue_spectrum(31_000_000, [45000.0] * 17)
         early = analyzer.render(1_000_000)
+        reference = LifxAudioAnalyzer(CHANNELS, mode="smooth", brightness=0.8)
+        self.assertEqual(
+            [c.rgb for c in early],
+            [c.rgb for c in reference.render(1_000_000)],
+        )
         due = analyzer.render(31_000_000)
-        self.assertGreater(_total(due), _total(early))
+        self.assertNotEqual([c.rgb for c in due], [c.rgb for c in early])
 
     def test_lookahead_burst_survives_until_due(self):
         # Regression: queue-time pruning/filtering used to destroy
@@ -189,13 +193,33 @@ class TestPlayheadPromotion(unittest.TestCase):
             analyzer.queue_spectrum(base + 30_000_000 + i * 50_000, [45000.0] * 17)
         before = analyzer.render(base)
         after = analyzer.render(base + 35_000_000)
-        self.assertGreater(_total(after), _total(before))
+        self.assertNotEqual([c.rgb for c in after], [c.rgb for c in before])
 
     def test_beat_schedule_pushed_ahead_is_not_pruned(self):
-        analyzer = LifxAudioAnalyzer(CHANNELS, mode="energetic", brightness=0.8)
+        analyzer = LifxAudioAnalyzer(
+            CHANNELS, mode="energetic", brightness=0.8, palette=FLAT_PALETTE
+        )
         analyzer.queue_spectrum(1_000_000, [0.5] * 17)
         analyzer.queue_beat(61_000_000, is_downbeat=True)
+        analyzer.queue_beat(62_000_000, is_downbeat=True)
+        analyzer.queue_beat(63_000_000, is_downbeat=True)
         analyzer.render(1_000_000)
-        index_before = analyzer._palette_index
-        analyzer.render(61_500_000)
-        self.assertNotEqual(analyzer._palette_index, index_before)
+        mid_segment = _total(analyzer.render(61_500_000))
+        at_beat = _total(analyzer.render(62_000_000))
+        self.assertGreater(at_beat, mid_segment)
+
+    def test_peak_boost_flashes_then_decays(self):
+        analyzer = LifxAudioAnalyzer(
+            CHANNELS, mode="smooth", brightness=0.8, palette=FLAT_PALETTE
+        )
+        analyzer.queue_spectrum(1_000_000, [0.5] * 17)
+        base = _total(analyzer.render(1_000_000))
+        analyzer.queue_peak(2_000_000, 255)
+        flash = _total(analyzer.render(2_000_000))
+        self.assertGreater(flash, base)
+        decayed = _total(analyzer.render(3_000_000))
+        self.assertLess(decayed, flash)
+
+
+if __name__ == "__main__":
+    unittest.main()

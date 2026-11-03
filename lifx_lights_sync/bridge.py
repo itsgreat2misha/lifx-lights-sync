@@ -73,7 +73,7 @@ _LOGGER = logging.getLogger(__name__)
 # the LIFX sender rate-limits actual device writes per light
 # (send_rate_hz, default 20/s), so the faster render rate only smooths
 # interpolation, it does not flood the lights.
-_RENDER_RATE_HZ = 30
+_RENDER_RATE_HZ = 50
 _RENDER_PERIOD_S = 1.0 / _RENDER_RATE_HZ
 # Visualizer feature rate requested from the extraction pipeline
 # (matches the Hue bridge; its filters are tuned for ~20 Hz input).
