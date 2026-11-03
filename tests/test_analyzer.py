@@ -266,6 +266,28 @@ class TestBassBrightnessPump(unittest.TestCase):
         high_total = self._run("energetic", self.TREBLE_FRAME)
         self.assertEqual(high_total, quiet_total)
 
+    def test_brightness_floor_lowers_rest_not_pop(self):
+        # With brightness 1.0 and floor 0.1, a quiet passage must rest
+        # at ~10% output while a bass hit still pops far above it.
+        quiet = LifxAudioAnalyzer(
+            self.ONE, mode="energetic", brightness=1.0,
+            brightness_floor=0.1, palette=FLAT_PALETTE,
+        )
+        for i in range(12):
+            quiet.queue_spectrum(1_000_000 + i * 50_000, [1000.0] * 17)
+        quiet.render(1_600_000)
+        rest = _total(quiet.render(2_000_000))
+        self.assertLess(rest, 3 * 255 * 0.2)  # well under the old 30% rest
+        loud = LifxAudioAnalyzer(
+            self.ONE, mode="energetic", brightness=1.0,
+            brightness_floor=0.1, palette=FLAT_PALETTE,
+        )
+        for i in range(12):
+            loud.queue_spectrum(1_000_000 + i * 50_000, self.BASS_FRAME)
+        loud.render(1_600_000)
+        pop = _total(loud.render(2_000_000))
+        self.assertGreater(pop, rest * 3)
+
     def test_smooth_still_reacts_to_high_frequencies(self):
         # The band restriction is Energetic-only: Smooth keeps the
         # full-range response, so a loud high frame changes its output.

@@ -134,6 +134,14 @@ class LifxLightsSyncProvider(PluginProvider):
                 category="settings",
             ),
             ConfigEntry(
+                key=const.CONF_BRIGHTNESS_FLOOR,
+                type=ConfigEntryType.INTEGER,
+                default_value=const.DEFAULT_BRIGHTNESS_FLOOR,
+                range=(const.MIN_BRIGHTNESS_FLOOR, const.MAX_BRIGHTNESS_FLOOR),
+                required=False,
+                category="settings",
+            ),
+            ConfigEntry(
                 key=const.CONF_COLOR_MODE,
                 type=ConfigEntryType.STRING,
                 default_value=const.DEFAULT_COLOR_MODE,

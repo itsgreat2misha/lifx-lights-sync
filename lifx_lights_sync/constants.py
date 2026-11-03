@@ -13,6 +13,7 @@ CONF_DISCOVERY_SOURCE = "discovery_source"
 CONF_HA_URL = "ha_url"
 CONF_HA_TOKEN = "ha_token"
 CONF_BRIGHTNESS = "brightness"
+CONF_BRIGHTNESS_FLOOR = "brightness_floor"
 CONF_COLOR_MODE = "color_mode"
 CONF_LATENCY_MS = "latency_ms"
 CONF_SEND_RATE_HZ = "send_rate_hz"
@@ -28,7 +29,8 @@ DEFAULT_DISCOVERY_SOURCE = SOURCE_AUTO
 # --- Defaults ---
 DEFAULT_HA_URL = ""
 DEFAULT_HA_TOKEN = ""
-DEFAULT_BRIGHTNESS = 80  # percent
+DEFAULT_BRIGHTNESS = 80  # percent (upper bound: the peaks)
+DEFAULT_BRIGHTNESS_FLOOR = 0  # percent (lower bound: rest level; 0 = per-mode default)
 DEFAULT_COLOR_MODE = "smooth"
 DEFAULT_LATENCY_MS = 0
 DEFAULT_SEND_RATE_HZ = 20
@@ -37,6 +39,8 @@ DEFAULT_SEND_RATE_HZ = 20
 # Assistant conventions; internally the analyzer works with 0.0-1.0.
 MIN_BRIGHTNESS = 1
 MAX_BRIGHTNESS = 100
+MIN_BRIGHTNESS_FLOOR = 0
+MAX_BRIGHTNESS_FLOOR = 99
 MIN_LATENCY_MS = 0
 MAX_LATENCY_MS = 2_000
 MIN_SEND_RATE_HZ = 1

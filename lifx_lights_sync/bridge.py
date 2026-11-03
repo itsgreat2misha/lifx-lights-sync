@@ -138,6 +138,7 @@ class LifxTargetBridge:
             channels=self.target.channels,
             mode=settings.color_mode,
             brightness=settings.brightness,
+            brightness_floor=settings.brightness_floor,
         )
 
         client_id = _client_id_for(self.target.target_id)
@@ -229,6 +230,7 @@ class LifxTargetBridge:
         if self._analyzer:
             self._analyzer.set_mode(settings.color_mode)
             self._analyzer.set_brightness(settings.brightness)
+            self._analyzer.set_brightness_floor(settings.brightness_floor)
         self._sender.set_send_rate(settings.send_rate_hz)
         self._latency_us = settings.latency_us
 

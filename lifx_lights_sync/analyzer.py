@@ -182,11 +182,15 @@ class LifxAudioAnalyzer:
         channels: Sequence[LightChannel],
         mode: str = const.DEFAULT_COLOR_MODE,
         brightness: float = 0.8,
+        brightness_floor: float = 0.0,
         palette: Sequence[RGB] | None = None,
     ) -> None:
         self._channels: list[LightChannel] = list(channels)
         self._mode = mode if mode in MODE_PRESETS else const.DEFAULT_COLOR_MODE
         self._brightness = clamp(float(brightness))
+        # Absolute resting-brightness lower bound (0.0-1.0). 0 keeps
+        # each mode's built-in channel floor.
+        self._brightness_floor = clamp(float(brightness_floor))
         # Palette stored as 0.0-1.0 float RGB.
         self._palette: list[tuple[float, float, float]] = [
             (r / 255.0, g / 255.0, b / 255.0)
@@ -225,6 +229,24 @@ class LifxAudioAnalyzer:
 
     def set_brightness(self, brightness: float) -> None:
         self._brightness = clamp(float(brightness))
+
+    def set_brightness_floor(self, brightness_floor: float) -> None:
+        self._brightness_floor = clamp(float(brightness_floor))
+
+    def _effective_channel_floor(self) -> float:
+        """Channel multiplier floor, honoring the user's lower bound.
+
+        When a brightness floor is configured it replaces the mode's
+        built-in floor: the floor is an absolute output level, so as a
+        multiplier it is floor / brightness (capped below the max).
+        """
+        preset = self._preset
+        if self._brightness_floor > 0.0 and self._brightness > 0.0:
+            return min(
+                self._brightness_floor / self._brightness,
+                preset.channel_max - 0.01,
+            )
+        return preset.channel_floor
 
     def set_palette(self, palette: Sequence[RGB]) -> None:
         if palette:
@@ -382,7 +404,7 @@ class LifxAudioAnalyzer:
 
     def _transient_multiplier(self, index: int, energy: float) -> float:
         preset = self._preset
-        floor = preset.channel_floor
+        floor = self._effective_channel_floor()
         if preset.channel_transient_scale <= 0.0:
             return floor
         fast = self._channel_filters[index].update(energy)
@@ -404,9 +426,15 @@ class LifxAudioAnalyzer:
         usable = min(
             _CHANNEL_BIN_MAX if bin_cap is None else bin_cap, len(bins) - 1
         ) + 1
+        # The hard minimum multiplier must not override a configured
+        # brightness floor, or the floor setting would silently do
+        # nothing for low values.
+        min_mult = _PER_CHANNEL_MIN_MULT
+        if self._brightness_floor > 0.0:
+            min_mult = min(min_mult, self._effective_channel_floor())
         if n == 1:
             energy = sum(bins[:usable]) / usable
-            return [max(_PER_CHANNEL_MIN_MULT, self._transient_multiplier(0, energy))]
+            return [max(min_mult, self._transient_multiplier(0, energy))]
         multipliers = []
         for i in range(n):
             lo = (i * usable) // n
@@ -414,7 +442,7 @@ class LifxAudioAnalyzer:
             band = bins[lo:hi]
             energy = sum(band) / len(band) if band else 0.0
             multipliers.append(
-                max(_PER_CHANNEL_MIN_MULT, self._transient_multiplier(i, energy))
+                max(min_mult, self._transient_multiplier(i, energy))
             )
         return multipliers
 

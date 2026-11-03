@@ -75,6 +75,16 @@ def get_brightness(config: ProviderConfig) -> int:
     )
 
 
+def get_brightness_floor(config: ProviderConfig) -> int:
+    """Return the configured brightness floor percentage (0 = per-mode)."""
+    return _as_int(
+        config.get_value(const.CONF_BRIGHTNESS_FLOOR),
+        const.DEFAULT_BRIGHTNESS_FLOOR,
+        const.MIN_BRIGHTNESS_FLOOR,
+        const.MAX_BRIGHTNESS_FLOOR,
+    )
+
+
 def get_color_mode(config: ProviderConfig) -> str:
     """Return the configured visualization mode."""
     return _as_choice(
@@ -115,6 +125,7 @@ class PluginSettings:
     ha_url: str = const.DEFAULT_HA_URL
     ha_token: str = const.DEFAULT_HA_TOKEN
     brightness_percent: int = const.DEFAULT_BRIGHTNESS
+    brightness_floor_percent: int = const.DEFAULT_BRIGHTNESS_FLOOR
     color_mode: str = const.DEFAULT_COLOR_MODE
     latency_ms: int = const.DEFAULT_LATENCY_MS
     send_rate_hz: int = const.DEFAULT_SEND_RATE_HZ
@@ -123,6 +134,11 @@ class PluginSettings:
     def brightness(self) -> float:
         """Brightness as a 0.0-1.0 scale factor for the analyzer."""
         return self.brightness_percent / 100.0
+
+    @property
+    def brightness_floor(self) -> float:
+        """Resting brightness floor as a 0.0-1.0 factor (0 = per-mode)."""
+        return self.brightness_floor_percent / 100.0
 
     @property
     def latency_us(self) -> int:
@@ -151,6 +167,12 @@ class PluginSettings:
                 const.DEFAULT_BRIGHTNESS,
                 const.MIN_BRIGHTNESS,
                 const.MAX_BRIGHTNESS,
+            ),
+            brightness_floor_percent=_as_int(
+                values.get(const.CONF_BRIGHTNESS_FLOOR),
+                const.DEFAULT_BRIGHTNESS_FLOOR,
+                const.MIN_BRIGHTNESS_FLOOR,
+                const.MAX_BRIGHTNESS_FLOOR,
             ),
             color_mode=_as_choice(
                 values.get(const.CONF_COLOR_MODE),
@@ -182,6 +204,7 @@ class PluginSettings:
             ha_url=get_ha_url(config),
             ha_token=get_ha_token(config),
             brightness_percent=get_brightness(config),
+            brightness_floor_percent=get_brightness_floor(config),
             color_mode=get_color_mode(config),
             latency_ms=get_latency_ms(config),
             send_rate_hz=get_send_rate_hz(config),
@@ -191,6 +214,7 @@ class PluginSettings:
 __all__ = [
     "PluginSettings",
     "get_brightness",
+    "get_brightness_floor",
     "get_color_mode",
     "get_discovery_source",
     "get_ha_token",
