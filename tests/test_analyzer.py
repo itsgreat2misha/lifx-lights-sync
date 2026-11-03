@@ -223,3 +223,38 @@ class TestPlayheadPromotion(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBassBrightnessPump(unittest.TestCase):
+    """Energetic routes the bass transient into a global brightness lift.
+
+    Single channel + flat palette: the channel multiplier sees the mean
+    of all bins (identical for both frames) and the palette contributes
+    no saturation variance, so any total difference is the bass pump.
+    """
+
+    ONE = [LightChannel("aaaa00000001", 0.0)]
+    BASS_FRAME = [45000.0, 45000.0] + [100.0] * 15
+    TREBLE_FRAME = [100.0, 100.0] + [45000.0] * 2 + [100.0] * 13
+
+    def _run(self, mode, frame):
+        analyzer = LifxAudioAnalyzer(
+            self.ONE, mode=mode, brightness=0.8, palette=FLAT_PALETTE
+        )
+        for i in range(10):  # quiet lead-in so the baseline settles low
+            analyzer.queue_spectrum(1_000_000 + i * 50_000, [1000.0] * 17)
+        analyzer.render(1_500_000)
+        analyzer.queue_spectrum(2_000_000, frame)
+        return _total(analyzer.render(2_000_000))
+
+    def test_energetic_pumps_on_bass_not_treble(self):
+        self.assertGreater(
+            self._run("energetic", self.BASS_FRAME),
+            self._run("energetic", self.TREBLE_FRAME),
+        )
+
+    def test_smooth_has_no_bass_pump(self):
+        self.assertEqual(
+            self._run("smooth", self.BASS_FRAME),
+            self._run("smooth", self.TREBLE_FRAME),
+        )

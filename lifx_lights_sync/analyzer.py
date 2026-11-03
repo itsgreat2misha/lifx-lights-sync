@@ -106,6 +106,9 @@ class ModePreset:
     channel_max: float  # per-channel multiplier on a full transient
     onset_boost: float = 1.0  # scales the peak brightness boost
     bass_saturation_scale: float = 1.0  # scales the bass saturation swing
+    # Extra global brightness lift from the bass-band transient, added
+    # to every channel multiplier (room-wide kick pump). 0 = Hue stock.
+    bass_brightness_scale: float = 0.0
 
 
 MODE_PRESETS: dict[str, ModePreset] = {
@@ -133,6 +136,7 @@ MODE_PRESETS: dict[str, ModePreset] = {
         beat_animation_fraction=0.2, channel_transient_scale=8.0,
         color_gradient_spread=1.0, palette_advance=0.5,
         spatial_drift_per_second=0.15, channel_floor=0.30, channel_max=1.00,
+        bass_brightness_scale=0.6,
     ),
 }
 
@@ -187,6 +191,7 @@ class LifxAudioAnalyzer:
         self._channel_baselines: list[_ExpFilter] = []
         self._bass_baseline = 0.0
         self._bass_saturation = _BASS_SAT_MIN
+        self._bass_swing = 0.0  # normalized bass transient, 0.0-1.0
         self._peak_boost = 0.0
         self._peak_set_at_us: int | None = None
         self._peak_palette_position = 0.0
@@ -285,6 +290,7 @@ class LifxAudioAnalyzer:
         self._peak_boost = 0.0
         self._peak_set_at_us = None
         self._peak_palette_position = 0.0
+        self._bass_swing = 0.0
 
     # -- promotion / consumption ------------------------------------------
 
@@ -301,9 +307,12 @@ class LifxAudioAnalyzer:
                 bass_energy - self._bass_baseline
             ) * _BASS_BASELINE_SMOOTHING
             bass_transient = max(0.0, bass_energy - self._bass_baseline)
-            swing = self._preset.bass_saturation_scale * min(
-                1.0, bass_transient * _BASS_TRANSIENT_SCALE
-            )
+            swing_raw = min(1.0, bass_transient * _BASS_TRANSIENT_SCALE)
+            # The brightness pump follows the same swing with fast rise /
+            # slow decay per promoted frame, so kicks thump then settle.
+            swing_alpha = _BASS_SAT_RISE if swing_raw > self._bass_swing else _BASS_SAT_DECAY
+            self._bass_swing += (swing_raw - self._bass_swing) * swing_alpha
+            swing = self._preset.bass_saturation_scale * swing_raw
             sat_target = _BASS_SAT_MIN + (_BASS_SAT_MAX - _BASS_SAT_MIN) * swing
             alpha = _BASS_SAT_RISE if sat_target > self._bass_saturation else _BASS_SAT_DECAY
             self._bass_saturation += (sat_target - self._bass_saturation) * alpha
@@ -504,6 +513,9 @@ class LifxAudioAnalyzer:
         peak_factor = self._consume_peaks(now_us) * self._preset.onset_boost
         if peak_factor > 0.0:
             channel_mults = [min(1.0, m + peak_factor) for m in channel_mults]
+        bass_factor = self._preset.bass_brightness_scale * self._bass_swing
+        if bass_factor > 0.0:
+            channel_mults = [min(1.0, m + bass_factor) for m in channel_mults]
 
         prior, next_beat, segment = self._current_segment(now_us)
         if prior is None or next_beat is None or segment is None:
