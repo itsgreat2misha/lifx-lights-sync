@@ -148,3 +148,22 @@ class TestModeHandling(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSpectrumEncoding(unittest.TestCase):
+    def test_uint16_db_scaled_frames_are_not_clamped_flat(self):
+        # Regression: the Sendspin server sends spectrum bins as uint16
+        # dB-scaled values in [0, 65535]. Treating them as 0-255 clamped
+        # every bin to 1.0 and froze the light output at a static color.
+        analyzer = LifxAudioAnalyzer(CHANNELS, mode="smooth", brightness=0.8)
+        for i in range(30):
+            analyzer.queue_spectrum(1_000_000 + i * 50_000, [45000.0] * 17)
+        loud = analyzer.render(2_500_000)
+        for i in range(30):
+            analyzer.queue_spectrum(2_500_000 + i * 50_000, [1000.0] * 17)
+        quiet = analyzer.render(4_000_000)
+        self.assertGreater(
+            _total(loud),
+            _total(quiet),
+            "uint16 spectrum frames must modulate the output brightness",
+        )

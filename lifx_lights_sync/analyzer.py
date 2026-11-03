@@ -173,13 +173,21 @@ class LifxAudioAnalyzer:
     def queue_spectrum(self, timestamp_us: int, bins: Sequence[float]) -> None:
         """Queue one spectrum frame.
 
-        Bin values may be 0.0-1.0 floats or 0-255 ints; they are
-        normalized to 0.0-1.0 on arrival.
+        The Sendspin server encodes spectrum bins as uint16 dB-scaled
+        values in [0, 65535] (-60 dB -> 0, 0 dB -> 65535). Smaller-range
+        encodings (0-255 ints, 0.0-1.0 floats) are also accepted; the
+        scale is picked from the frame's peak so real frames are never
+        clamped flat.
         """
         if not bins:
             return
         peak_value = max(bins)
-        scale = 255.0 if peak_value > 1.5 else 1.0
+        if peak_value > 255.0:
+            scale = 65535.0
+        elif peak_value > 1.5:
+            scale = 255.0
+        else:
+            scale = 1.0
         normalized = tuple(clamp(float(value) / scale) for value in bins)
         self._spectrum.append((int(timestamp_us), normalized))
         self._update_filters(normalized)
