@@ -51,7 +51,8 @@ MODE_SMOOTH = "smooth"
 MODE_AMBIENT = "ambient"
 MODE_FLASHING = "flashing"
 MODE_ENERGETIC = "energetic"
-COLOR_MODES = (MODE_SMOOTH, MODE_AMBIENT, MODE_FLASHING, MODE_ENERGETIC)
+MODE_BASS = "bass"
+COLOR_MODES = (MODE_SMOOTH, MODE_AMBIENT, MODE_FLASHING, MODE_ENERGETIC, MODE_BASS)
 
 # --- Sendspin visualizer request (mirrors hue_entertainment @73c3e59) ---
 # The Sendspin server computes the spectrum; we only declare what we want.
@@ -122,6 +123,7 @@ __all__ = [
     "MIN_LATENCY_MS",
     "MIN_SEND_RATE_HZ",
     "MODE_AMBIENT",
+    "MODE_BASS",
     "MODE_ENERGETIC",
     "MODE_FLASHING",
     "MODE_SMOOTH",

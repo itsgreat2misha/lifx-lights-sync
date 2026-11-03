@@ -35,8 +35,9 @@ from .color import RGB, build_palette, clamp
 # Spectrum shaping (Hue blueprint values).
 _SPECTRUM_GAMMA = 0.5
 _SPECTRUM_BIN_NOISE_GATE = 0.02
-# Highest spectrum bin used for per-channel bands (17 mel bins total;
-# bin 10 ends ~3.5 kHz — above that is cymbal/air, not music shape).
+# Highest spectrum bin used for per-channel bands (17 mel bins total,
+# 20 Hz-20 kHz; bin edges: bin 0 ends 177 Hz, bin 1 ends 369 Hz,
+# bin 3 ends 887 Hz, bin 10 ends ~5.6 kHz).
 _CHANNEL_BIN_MAX = 10
 # Per-channel transient filters, updated once per render tick. The
 # baseline is slow (~5 s) so fast-minus-baseline isolates onsets.
@@ -53,6 +54,12 @@ _BASS_BASELINE_SMOOTHING = 0.005
 _BASS_TRANSIENT_SCALE = 10.0
 _BASS_SAT_RISE = 0.8
 _BASS_SAT_DECAY = 0.08
+# Dedicated Bass-mode envelope: its baseline adapts much faster than
+# the per-channel one (~0.5 s at the 50 Hz render rate) so sustained
+# bass settles to the floor and only genuine thumps stand out; the
+# deadband keeps small low-band fluctuations from modulating at all.
+_BASS_ENV_BASELINE_ALPHA = 0.04
+_BASS_ENV_DEADBAND = 0.03
 # Onset peaks: strength gate, boost scale, decay window.
 _PEAK_MIN_STRENGTH = 0.1
 _PEAK_BOOST_SCALE = 0.3
@@ -111,10 +118,16 @@ class ModePreset:
     bass_brightness_scale: float = 0.0
     # Highest spectrum bin feeding the per-channel brightness bands.
     # None = the standard cap (_CHANNEL_BIN_MAX). The bass-heavy
-    # Energetic tuning restricts brightness to bins 0-3 (~20-500 Hz:
-    # deep bass + mid-bass), mirroring the LedFx Filter effect's
-    # low-band power ranges, so voice/instruments don't move the lights.
+    # Energetic tuning restricts brightness to bins 0-3 (20-887 Hz on
+    # the server's mel scale).
     band_bin_max: int | None = None
+    # Dedicated Bass mode: every channel shares ONE brightness
+    # envelope computed from bins 0-1 only (20-369 Hz), instead of
+    # per-channel band transients. Combined with pulse_peak 1.0 and
+    # palette_advance 0.0 in the preset, neither the beat schedule
+    # nor broadband onset peaks can move the lights — only low-end
+    # transients can.
+    bass_only: bool = False
 
 
 MODE_PRESETS: dict[str, ModePreset] = {
@@ -139,16 +152,31 @@ MODE_PRESETS: dict[str, ModePreset] = {
     ),
     const.MODE_ENERGETIC: ModePreset(
         # Bass-heavy tuning (per Mikhail, modeled on his LedFx
-        # "Master bathroom on" Filter scenes): brightness reacts only
-        # to deep bass + mid-bass (~20-500 Hz, bins 0-3) — kicks and
-        # low end pump the room; voice and instruments do not. The
-        # broadband onset-peak flash is off for the same reason (peaks
-        # still walk the palette).
+        # "Master bathroom on" Filter scenes): per-channel brightness
+        # bands and the kick pump use bins 0-3 (20-887 Hz). The
+        # broadband onset-peak flash is off (peaks still walk the
+        # palette), but the beat pulse still fires on every beat.
         pulse_peak=1.2, downbeat_pulse_peak=1.2,
         beat_animation_fraction=0.2, channel_transient_scale=8.0,
         color_gradient_spread=1.0, palette_advance=0.5,
         spatial_drift_per_second=0.15, channel_floor=0.30, channel_max=1.00,
         onset_boost=0.0, bass_brightness_scale=0.6, band_bin_max=3,
+    ),
+    const.MODE_BASS: ModePreset(
+        # Dedicated Bass mode (per Mikhail, Nov 3 2026): a single
+        # shared envelope from bins 0-1 only (20-369 Hz — the LedFx
+        # low split is ~350 Hz) drives every channel together, so the
+        # room pops as one on kicks and low-end thumps and rests dim
+        # in between. No beat pulse (pulse_peak 1.0), no peak boost
+        # and no peak palette walk (palette_advance 0.0): colors only
+        # drift slowly. Sustained bass settles back toward the floor
+        # as the transient baseline catches up — thumps, not flicker.
+        pulse_peak=1.0, downbeat_pulse_peak=1.0,
+        beat_animation_fraction=0.2, channel_transient_scale=8.0,
+        color_gradient_spread=0.5, palette_advance=0.0,
+        spatial_drift_per_second=0.05, channel_floor=0.15, channel_max=1.00,
+        onset_boost=0.0, bass_saturation_scale=0.5, band_bin_max=1,
+        bass_only=True,
     ),
 }
 
@@ -209,6 +237,10 @@ class LifxAudioAnalyzer:
         self._bass_saturation = _BASS_SAT_MIN
         self._bass_swing = 0.0  # normalized bass transient, 0.0-1.0
         self._pump_baseline = 0.0  # slow baseline for the pump band
+        self._bass_env_fast = _ExpFilter(_CHANNEL_RISE, _CHANNEL_DECAY)
+        self._bass_env_baseline = _ExpFilter(
+            _BASS_ENV_BASELINE_ALPHA, _BASS_ENV_BASELINE_ALPHA
+        )
         self._peak_boost = 0.0
         self._peak_set_at_us: int | None = None
         self._peak_palette_position = 0.0
@@ -327,6 +359,8 @@ class LifxAudioAnalyzer:
         self._peak_palette_position = 0.0
         self._bass_swing = 0.0
         self._pump_baseline = 0.0
+        self._bass_env_fast.value = 0.0
+        self._bass_env_baseline.value = 0.0
 
     # -- promotion / consumption ------------------------------------------
 
@@ -422,6 +456,25 @@ class LifxAudioAnalyzer:
             return [1.0] * n
         self._ensure_filters()
         bins = self._spectrum
+        if self._preset.bass_only:
+            # One shared low-end envelope for every channel: the mean
+            # of bins 0-1 (20-369 Hz) through a dedicated fast/slow
+            # filter pair, so all lights pop together on a thump and
+            # sustained bass settles back to the floor. The hard
+            # per-channel minimum does not apply here — it would
+            # override this mode's deliberately low rest floor.
+            low_count = min(2, len(bins))
+            energy = sum(bins[:low_count]) / low_count
+            fast = self._bass_env_fast.update(energy)
+            baseline = self._bass_env_baseline.update(energy)
+            transient = max(0.0, fast - baseline - _BASS_ENV_DEADBAND)
+            modulation = min(
+                1.0, transient * self._preset.channel_transient_scale
+            )
+            floor = self._effective_channel_floor()
+            return [
+                floor + (self._preset.channel_max - floor) * modulation
+            ] * n
         bin_cap = self._preset.band_bin_max
         usable = min(
             _CHANNEL_BIN_MAX if bin_cap is None else bin_cap, len(bins) - 1

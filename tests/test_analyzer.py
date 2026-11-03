@@ -300,3 +300,79 @@ class TestBassBrightnessPump(unittest.TestCase):
         quiet_total = _total(quiet.render(2_000_000))
         high_total = self._run("smooth", self.TREBLE_FRAME)
         self.assertNotEqual(high_total, quiet_total)
+
+
+class TestBassMode(unittest.TestCase):
+    """Dedicated Bass mode: bins 0-1 only, shared envelope, nothing else.
+
+    Regression target: Energetic still reacted to content up to
+    887 Hz (bins 2-3) and to every scheduled beat. Bass mode must be
+    deaf to all of that — only low-end transients move the lights.
+    """
+
+    QUIET_FRAME = [1000.0] * 17
+    BASS_FRAME = [45000.0, 45000.0] + [100.0] * 15
+    BIN2_FRAME = [100.0, 100.0, 45000.0] + [100.0] * 14  # 369-602 Hz
+    TREBLE_FRAME = [100.0] * 10 + [45000.0] * 2 + [100.0] * 5
+
+    def _analyzer(self):
+        return LifxAudioAnalyzer(
+            CHANNELS, mode="bass", brightness=0.8, palette=FLAT_PALETTE
+        )
+
+    def _settled(self, frame):
+        """Analyzer fed 10 quiet frames, settled, then one test frame."""
+        analyzer = self._analyzer()
+        for i in range(10):
+            analyzer.queue_spectrum(1_000_000 + i * 50_000, self.QUIET_FRAME)
+        analyzer.render(1_500_000)
+        analyzer.queue_spectrum(2_000_000, frame)
+        return analyzer
+
+    def test_bass_hit_pops_all_channels_together(self):
+        commands = self._settled(self.BASS_FRAME).render(2_000_000)
+        quiet = self._settled(self.QUIET_FRAME).render(2_000_000)
+        self.assertGreater(_total(commands), _total(quiet) * 2)
+        # Shared envelope + flat palette: every channel identical.
+        self.assertEqual(len({c.rgb for c in commands}), 1)
+
+    def test_bin2_and_treble_do_not_move_the_lights(self):
+        quiet = [c.rgb for c in self._settled(self.QUIET_FRAME).render(2_000_000)]
+        for frame in (self.BIN2_FRAME, self.TREBLE_FRAME):
+            commands = [c.rgb for c in self._settled(frame).render(2_000_000)]
+            self.assertEqual(commands, quiet)
+
+    def test_beat_schedule_has_no_effect(self):
+        plain = self._settled(self.BASS_FRAME)
+        beaten = self._settled(self.BASS_FRAME)
+        for ts in (1_000_000, 2_000_000, 3_000_000):
+            beaten.queue_beat(ts, is_downbeat=True)
+        self.assertEqual(
+            [c.rgb for c in beaten.render(2_000_000)],
+            [c.rgb for c in plain.render(2_000_000)],
+        )
+
+    def test_onset_peak_has_no_effect(self):
+        plain = self._settled(self.BASS_FRAME)
+        peaked = self._settled(self.BASS_FRAME)
+        peaked.queue_peak(2_000_000, 255)
+        self.assertEqual(
+            [c.rgb for c in peaked.render(2_000_000)],
+            [c.rgb for c in plain.render(2_000_000)],
+        )
+
+    def test_sustained_bass_settles_toward_the_floor(self):
+        analyzer = self._analyzer()
+        for i in range(10):
+            analyzer.queue_spectrum(1_000_000 + i * 50_000, self.QUIET_FRAME)
+        analyzer.render(1_500_000)
+        first = None
+        last = None
+        for i in range(60):
+            ts = 2_000_000 + i * 50_000
+            analyzer.queue_spectrum(ts, self.BASS_FRAME)
+            total = _total(analyzer.render(ts))
+            if first is None:
+                first = total
+            last = total
+        self.assertLess(last, first)

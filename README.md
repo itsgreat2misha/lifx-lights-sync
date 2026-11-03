@@ -28,8 +28,11 @@ Sendspin player or group, and the lights start reacting.
   Ceiling / Tile-style matrix lights get a full per-zone frame
   (16 x 8 for a 13"x26" ceiling, 8 x 8 for a round ceiling). A ceiling's
   uplight zone (the last zone) is never overwritten by image pixels.
-- **Four color modes** — Smooth, Ambient, Flashing, Energetic (port of
-  the Hue analyzer's presets).
+- **Five color modes** — Smooth, Ambient, Flashing, Energetic (port of
+  the Hue analyzer's presets), plus a dedicated Bass mode: one shared
+  brightness envelope from the 20-369 Hz spectrum bins only, so the
+  whole target pops together on low-end thumps and rests dim between
+  them (no beat pulse, no onset-peak effects).
 - **Album palette** — colors follow the playing track's artwork
   palette when the Sendspin server provides it.
 - **State restore** — unlike Hue, LIFX lights do not revert on their
@@ -138,7 +141,7 @@ yet.
 | Home Assistant URL | `ha_url` | — | Base URL, e.g. `http://homeassistant.local:8123`. Only needed when MA's Home Assistant provider is not configured |
 | Home Assistant token | `ha_token` | — | Long-lived access token (stored as a secret). Same condition as above — with the hass provider configured, no HA credentials are entered in this plugin at all |
 | Brightness (%) | `brightness` | 80 | Cap on effect brightness |
-| Color mode | `color_mode` | `smooth` | `smooth` / `ambient` / `flashing` / `energetic` |
+| Color mode | `color_mode` | `smooth` | `smooth` / `ambient` / `flashing` / `energetic` / `bass` |
 | Latency compensation (ms) | `latency_ms` | 0 | Shifts render time for speaker/network latency |
 | Max sends per second | `send_rate_hz` | 20 | Per-light rate limit |
 
