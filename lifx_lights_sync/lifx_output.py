@@ -4,11 +4,13 @@ One :class:`LifxSender` owns the output side of one sync target:
 
 - ``snapshot()`` records every light's current color/power (and zone
   colors for matrix lights) before a stream starts;
-- ``send()`` applies analyzer commands, rate-limited per device —
-  bulbs get a single ``Light.set_color()``, matrix lights get a full
-  frame, ceiling lights are written through
-  ``CeilingLight.set_downlight_colors()`` so the uplight zone (the last
-  zone of the fixture) is never overwritten by image pixels;
+- ``send()`` applies analyzer commands, rate-limited per device, using
+  the LedFx-proven output shapes: bulbs get one fire-and-forget
+  ``Light.SetColor`` packet (no ack wait; the bulb interpolates over
+  exactly one frame interval; capped at 20 Hz), matrix and ceiling
+  lights get full frames through the lifx-async ``Animator``
+  (``send_frame`` with protocol HSBK tuples, the snapshot uplight color
+  re-injected into the ceiling's last zone every frame);
 - ``restore()`` puts the snapshot back when the stream stops (unlike
   Hue, LIFX lights do not revert on their own, so this is mandatory).
 
@@ -67,6 +69,16 @@ def _hsbk_components(color: Any) -> tuple[float, float, float, int] | None:
         )
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def _protocol_tuple(color: Any) -> tuple[int, int, int, int]:
+    """Convert an HSBK to the Animator's plain uint16 protocol tuple."""
+    return (
+        round(color.hue / 360.0 * 65535) % 65536,
+        round(color.saturation * 65535),
+        round(color.brightness * 65535),
+        int(color.kelvin),
+    )
 
 
 def _channel_serial_and_zone(channel_id: str) -> tuple[str, int | None]:
@@ -218,17 +230,30 @@ class LifxSender:
         self._devices: dict[str, Any] = {
             normalize_serial(serial): device for serial, device in devices.items()
         }
-        self._min_interval = 1.0 / max(1, send_rate_hz)
+        self._send_rate_hz = max(1, send_rate_hz)
+        self._min_interval = 1.0 / self._send_rate_hz
         self._last_send: dict[str, float] = {}
         self._powered_on: set[str] = set()
         self._snapshots: dict[str, DeviceSnapshot] = {}
         self._last_frame: dict[str, dict[int, RGB]] = {}
+        self._animators: dict[str, Any] = {}
         self._lock = asyncio.Lock()
 
     # -- configuration -----------------------------------------------------
 
     def set_send_rate(self, send_rate_hz: int) -> None:
-        self._min_interval = 1.0 / max(1, send_rate_hz)
+        self._send_rate_hz = max(1, send_rate_hz)
+        self._min_interval = 1.0 / self._send_rate_hz
+
+    @property
+    def _bulb_interval(self) -> float:
+        """Bulbs are capped at 20 Hz (LedFx: higher rates strobo)."""
+        return max(self._min_interval, 1.0 / 20)
+
+    @property
+    def _bulb_duration_ms(self) -> int:
+        """Bulb transition: exactly one frame interval (LedFx-style)."""
+        return max(1, int(1000 * self._bulb_interval) - 2)
 
     @property
     def target(self) -> SyncTarget:
@@ -250,13 +275,47 @@ class LifxSender:
             return HSBK(hue=hue, saturation=0.0, brightness=brightness, kelvin=kelvin)
         return HSBK.from_rgb(rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0)
 
-    def _rate_limited(self, serial: str) -> bool:
+    def _rate_limited(self, serial: str, interval: float | None = None) -> bool:
         now = time.monotonic()
         last = self._last_send.get(serial, 0.0)
-        if now - last < self._min_interval:
+        if now - last < (self._min_interval if interval is None else interval):
             return True
         self._last_send[serial] = now
         return False
+
+    async def _send_bulb_packet(self, device: Any, rgb: RGB) -> None:
+        """Send one bulb color as a raw SetColor packet (LedFx-style).
+
+        Fire-and-forget: no acknowledgement is awaited, so the send
+        cadence stays metronome-steady, and the bulb's own hardware
+        interpolates over exactly one frame interval.
+        """
+        from lifx.protocol import packets  # noqa: PLC0415
+
+        color = self._to_hsbk(rgb).to_protocol()
+        packet = packets.Light.SetColor(
+            color=color, duration=self._bulb_duration_ms
+        )
+        await device.connection.send_packet(packet)
+
+    async def _get_animator(self, serial: str, device: Any) -> Any | None:
+        """Return the device's prepared Animator (matrix fast path)."""
+        animator = self._animators.get(serial)
+        if animator is None:
+            device_animator = getattr(device, "animator", None)
+            if device_animator is None:
+                return None
+            animator = await device_animator.prepare()
+            self._animators[serial] = animator
+        return animator
+
+    def _close_animators(self) -> None:
+        for animator in self._animators.values():
+            try:
+                animator.close()
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Animator close failed", exc_info=True)
+        self._animators.clear()
 
     async def _ensure_power(self, serial: str, device: Any) -> None:
         if serial in self._powered_on:
@@ -303,6 +362,9 @@ class LifxSender:
 
     async def restore(self) -> None:
         """Restore the snapshot taken by :meth:`snapshot` (best effort)."""
+        # Animators bypass the device color methods; close them so the
+        # awaited restore calls below own the device state again.
+        self._close_animators()
         async with self._lock:
             snapshots, self._snapshots = self._snapshots, {}
             self._powered_on.clear()
@@ -376,16 +438,14 @@ class LifxSender:
 
         for serial, rgb in bulbs.items():
             device = self._device(serial)
-            if device is None or self._rate_limited(serial):
+            if device is None or self._rate_limited(serial, self._bulb_interval):
                 continue
             if max(rgb) > 0:
                 await self._ensure_power(serial, device)
             try:
-                # A short transition blends the discrete render steps
-                # into continuous motion instead of visible flicker.
-                await device.set_color(self._to_hsbk(rgb), duration=0.12)
+                await self._send_bulb_packet(device, rgb)
             except Exception:  # noqa: BLE001
-                _LOGGER.warning("set_color failed for %s", serial, exc_info=True)
+                _LOGGER.warning("Bulb packet send failed for %s", serial, exc_info=True)
 
         for serial, zone_map in zones.items():
             device = self._device(serial)
@@ -416,37 +476,46 @@ class LifxSender:
         total_zones = width * height
         is_ceiling = bool(light and light.is_ceiling) or target.is_ceiling
 
-        if is_ceiling and type(device).__name__ == "CeilingLight":
-            downlight_count = total_zones - 1 if total_zones > 1 else total_zones
-            colors = [
-                self._to_hsbk(frame.get(index, (0, 0, 0)))
-                for index in range(downlight_count)
-            ]
-            # set_downlight_colors only touches zones before the uplight
-            # zone, so the uplight keeps whatever color it already had.
-            await device.set_downlight_colors(colors, duration=0.12)
-            return
-
+        # Compose the full frame; on a ceiling fixture the last zone is
+        # the uplight, which keeps its snapshot color (the analyzer only
+        # drives the downlight zones).
         colors = [
             self._to_hsbk(frame.get(index, (0, 0, 0))) for index in range(total_zones)
         ]
         if is_ceiling and colors:
-            # Generic matrix path on a ceiling fixture: preserve the
-            # uplight by re-sending its snapshot color in the last zone.
             snapshot = self._snapshots.get(serial)
             if snapshot and snapshot.zone_colors and len(snapshot.zone_colors) == total_zones:
                 colors[-1] = self._hsbk_from_components(snapshot.zone_colors[-1])
-        # TODO(live-verify): for sustained high-rate animation the
-        # lifx-async Animator (device.animator.prepare() then the
-        # synchronous Animator.send_frame() with uint16 HSBK tuples) is
-        # the library's fast path; set_matrix_colors is the confirmed
-        # simple path and is what we ship until frame rates are measured
-        # on real hardware. The 120 ms duration (matrix API takes ms)
-        # blends render steps like the bulb path's 0.12 s.
+
+        # Fast path (LedFx-style): the lifx-async Animator sends frames
+        # synchronously through one socket with ack-gated flow control —
+        # no per-frame request/response stalls. It takes plain uint16
+        # protocol tuples (HSBK.to_protocol() returns a non-iterable
+        # LightHsbk object and raises inside send_frame).
+        if type(device).__name__ in ("MatrixLight", "CeilingLight"):
+            try:
+                animator = await self._get_animator(serial, device)
+                if animator is not None:
+                    animator.send_frame(
+                        [_protocol_tuple(color) for color in colors]
+                    )
+                    return
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Animator send failed for %s; falling back", serial, exc_info=True
+                )
+                self._animators.pop(serial, None)
+
+        if is_ceiling and type(device).__name__ == "CeilingLight":
+            # set_downlight_colors only touches zones before the uplight
+            # zone, so the uplight keeps whatever color it already had.
+            await device.set_downlight_colors(colors[:-1], duration=0.12)
+            return
         await device.set_matrix_colors(0, colors, duration=120)
 
     async def close(self) -> None:
         """Close all device connections owned by this sender."""
+        self._close_animators()
         for serial, device in self._devices.items():
             try:
                 await device.close()
