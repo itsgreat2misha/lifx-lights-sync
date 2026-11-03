@@ -60,6 +60,14 @@ _BASS_SAT_DECAY = 0.08
 # deadband keeps small low-band fluctuations from modulating at all.
 _BASS_ENV_BASELINE_ALPHA = 0.04
 _BASS_ENV_DEADBAND = 0.03
+# LedFx recipe for the envelope input (its Filter ranges are Beat
+# <100 Hz / Bass 100-250 Hz with a ~x^2 "peak isolation" contrast):
+# bin 0 (20-177 Hz) is the driver; bin 1 (177-369 Hz, where sung
+# fundamentals live) contributes at half weight and only in
+# proportion to bin 0's activity, and both bins are squared first —
+# moderate content is crushed, genuine low-end hits survive.
+_BASS_BIN1_WEIGHT = 0.5
+_BASS_BIN1_GATE_FULL = 0.20
 # Onset peaks: strength gate, boost scale, decay window.
 _PEAK_MIN_STRENGTH = 0.1
 _PEAK_BOOST_SCALE = 0.3
@@ -163,14 +171,18 @@ MODE_PRESETS: dict[str, ModePreset] = {
         onset_boost=0.0, bass_brightness_scale=0.6, band_bin_max=3,
     ),
     const.MODE_BASS: ModePreset(
-        # Dedicated Bass mode (per Mikhail, Nov 3 2026): a single
-        # shared envelope from bins 0-1 only (20-369 Hz — the LedFx
-        # low split is ~350 Hz) drives every channel together, so the
-        # room pops as one on kicks and low-end thumps and rests dim
-        # in between. No beat pulse (pulse_peak 1.0), no peak boost
-        # and no peak palette walk (palette_advance 0.0): colors only
-        # drift slowly. Sustained bass settles back toward the floor
-        # as the transient baseline catches up — thumps, not flicker.
+        # Dedicated Bass mode (per Mikhail, Nov 3 2026; v2 same day,
+        # rebuilt on his LedFx Filter recipe): a single shared
+        # envelope drives every channel together — bin 0 (20-177 Hz)
+        # dominant with squared (peak-isolation) contrast, bin 1
+        # (177-369 Hz) half-weight and gated by bin 0, matching LedFx's
+        # Beat <100 Hz / Bass 100-250 Hz selectivity — so the room pops
+        # as one on kicks and low-end thumps, rests dim in between,
+        # and a voice fundamental in bin 1 alone cannot move it. No
+        # beat pulse (pulse_peak 1.0), no peak boost and no peak
+        # palette walk (palette_advance 0.0): colors only drift
+        # slowly. Sustained bass settles back toward the floor as the
+        # transient baseline catches up — thumps, not flicker.
         pulse_peak=1.0, downbeat_pulse_peak=1.0,
         beat_animation_fraction=0.2, channel_transient_scale=8.0,
         color_gradient_spread=0.5, palette_advance=0.0,
@@ -457,14 +469,22 @@ class LifxAudioAnalyzer:
         self._ensure_filters()
         bins = self._spectrum
         if self._preset.bass_only:
-            # One shared low-end envelope for every channel: the mean
-            # of bins 0-1 (20-369 Hz) through a dedicated fast/slow
-            # filter pair, so all lights pop together on a thump and
-            # sustained bass settles back to the floor. The hard
-            # per-channel minimum does not apply here — it would
-            # override this mode's deliberately low rest floor.
-            low_count = min(2, len(bins))
-            energy = sum(bins[:low_count]) / low_count
+            # One shared low-end envelope for every channel, built the
+            # LedFx way: squared contrast on the low bins (which also
+            # undoes this pipeline's sqrt gamma for those bins), bin 0
+            # dominant, bin 1 half-weight and gated by bin 0 — a vocal
+            # fundamental in bin 1 alone earns nothing. The envelope
+            # runs through a dedicated fast/slow filter pair, so all
+            # lights pop together on a thump and sustained bass
+            # settles back to the floor. The hard per-channel minimum
+            # does not apply here — it would override this mode's
+            # deliberately low rest floor.
+            deep = bins[0] ** 2
+            energy = deep
+            if len(bins) > 1:
+                gate = min(1.0, deep / _BASS_BIN1_GATE_FULL)
+                energy += _BASS_BIN1_WEIGHT * gate * bins[1] ** 2
+            energy = min(1.0, energy)
             fast = self._bass_env_fast.update(energy)
             baseline = self._bass_env_baseline.update(energy)
             transient = max(0.0, fast - baseline - _BASS_ENV_DEADBAND)

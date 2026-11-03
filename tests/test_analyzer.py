@@ -336,6 +336,23 @@ class TestBassMode(unittest.TestCase):
         # Shared envelope + flat palette: every channel identical.
         self.assertEqual(len({c.rgb for c in commands}), 1)
 
+    def test_voice_fundamental_in_bin1_alone_is_ignored(self):
+        # A sung note at ~250 Hz lives in bin 1 (177-369 Hz) with bin 0
+        # quiet. LedFx's Beat/Bass bulbs never hear it (their bands end
+        # at 100/250 Hz); with bin 1 gated by bin 0, neither do ours.
+        voice_frame = [100.0, 45000.0] + [100.0] * 15
+        quiet = [c.rgb for c in self._settled(self.QUIET_FRAME).render(2_000_000)]
+        commands = [c.rgb for c in self._settled(voice_frame).render(2_000_000)]
+        self.assertEqual(commands, quiet)
+
+    def test_bin1_contributes_when_bin0_is_active(self):
+        # A real bass event excites both bins: bin 0 moderately, bin 1
+        # strongly. The gate opens and the combined energy pops.
+        both_frame = [20000.0, 45000.0] + [100.0] * 15
+        quiet_total = _total(self._settled(self.QUIET_FRAME).render(2_000_000))
+        both_total = _total(self._settled(both_frame).render(2_000_000))
+        self.assertGreater(both_total, quiet_total * 2)
+
     def test_bin2_and_treble_do_not_move_the_lights(self):
         quiet = [c.rgb for c in self._settled(self.QUIET_FRAME).render(2_000_000)]
         for frame in (self.BIN2_FRAME, self.TREBLE_FRAME):
