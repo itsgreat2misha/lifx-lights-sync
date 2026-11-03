@@ -26,6 +26,7 @@ Discovery order for source ``auto`` (the default):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -82,6 +83,7 @@ class LifxLightsSyncProvider(PluginProvider):
         self._bridge_manager: LifxBridgeManager | None = None
         self._devices: dict[str, Any] = {}
         self._settings = PluginSettings.from_config(config)
+        self._rediscovery_task: asyncio.Task[None] | None = None
 
     @property
     def settings(self) -> PluginSettings:
@@ -162,6 +164,45 @@ class LifxLightsSyncProvider(PluginProvider):
     async def loaded_in_mass(self) -> None:
         """Discover lights and set up sync-target bridges."""
         self._settings = PluginSettings.from_config(self.config)
+        ha_backed = await self._discover_and_setup()
+        if not ha_backed and self._settings.discovery_source in (
+            const.SOURCE_AUTO,
+            const.SOURCE_HASS,
+        ):
+            # MA's hass provider may simply not have been loaded yet
+            # when this plugin set up (provider load order is not
+            # guaranteed); retry once it appears instead of staying
+            # LAN-only until the next restart.
+            self._rediscovery_task = self.mass.create_task(
+                self._delayed_rediscovery()
+            )
+
+    async def _delayed_rediscovery(self) -> None:
+        """Re-run discovery once MA's hass provider is available."""
+        await asyncio.sleep(45)
+        self._rediscovery_task = None
+        if self.mass.get_provider("hass") is None:
+            self.logger.debug(
+                "hass provider still unavailable; keeping current discovery"
+            )
+            return
+        self.logger.info(
+            "hass provider is now available; re-running discovery to "
+            "upgrade from the LAN-only target set"
+        )
+        if self._bridge_manager:
+            await self._bridge_manager.stop_all()
+            self._bridge_manager = None
+        for device in self._devices.values():
+            try:
+                await device.close()
+            except Exception:  # noqa: BLE001
+                self.logger.debug("Error closing LIFX device", exc_info=True)
+        self._devices = {}
+        await self._discover_and_setup()
+
+    async def _discover_and_setup(self) -> bool:
+        """Run discovery and bridge setup; True if HA-sourced."""
         settings = self._settings
         source = settings.discovery_source
 
@@ -224,7 +265,7 @@ class LifxLightsSyncProvider(PluginProvider):
         if not targets:
             self.logger.warning("No LIFX sync targets discovered")
             self.available = False
-            return
+            return False
 
         self.logger.info(
             "Discovery complete via %s: %d sync target(s): %s",
@@ -276,6 +317,7 @@ class LifxLightsSyncProvider(PluginProvider):
         self._bridge_manager = LifxBridgeManager(self)
         await self._bridge_manager.setup_bridges(targets, self._devices)
         self.available = bool(self._bridge_manager.bridges)
+        return ha_source_used is not None
 
     async def _discover_via_hass_provider(
         self, required: bool
@@ -313,6 +355,9 @@ class LifxLightsSyncProvider(PluginProvider):
 
     async def unload(self, is_removed: bool = False) -> None:
         """Handle unload/close of the provider."""
+        if self._rediscovery_task and not self._rediscovery_task.done():
+            self._rediscovery_task.cancel()
+            self._rediscovery_task = None
         if self._bridge_manager:
             await self._bridge_manager.stop_all()
             self._bridge_manager = None
