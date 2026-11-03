@@ -54,20 +54,26 @@ _BASS_BASELINE_SMOOTHING = 0.005
 _BASS_TRANSIENT_SCALE = 10.0
 _BASS_SAT_RISE = 0.8
 _BASS_SAT_DECAY = 0.08
-# Dedicated Bass-mode envelope: its baseline adapts much faster than
-# the per-channel one (~0.5 s at the 50 Hz render rate) so sustained
-# bass settles to the floor and only genuine thumps stand out; the
-# deadband keeps small low-band fluctuations from modulating at all.
-_BASS_ENV_BASELINE_ALPHA = 0.04
-_BASS_ENV_DEADBAND = 0.03
-# LedFx recipe for the envelope input (its Filter ranges are Beat
-# <100 Hz / Bass 100-250 Hz with a ~x^2 "peak isolation" contrast):
-# bin 0 (20-177 Hz) is the driver; bin 1 (177-369 Hz, where sung
-# fundamentals live) contributes at half weight and only in
-# proportion to bin 0's activity, and both bins are squared first —
-# moderate content is crushed, genuine low-end hits survive.
+# Bass mode is a LEVEL follower, the way LedFx's Filter effect works:
+# its Beat/Bass bulbs track smoothed band level, not transients. A
+# fast/slow transient pair inverts on real music — measured on
+# Mikhail's Nov 3 clips, a sustained heavy section suppresses itself
+# as the baseline catches up while sparse vocal phrases keep punching
+# through — so brightness follows the smoothed low-band level above
+# a threshold, updated once per spectrum frame (20 Hz). Input
+# contrast: the shaped low bins are cubed (effective ^1.5 on the
+# dB-normalized magnitude; LedFx's peak isolation is ^1.96 on its
+# linear samples) so the vocal-band residue sitting in the low bins
+# is crushed while real low end survives. Bin 0 (20-177 Hz) is the
+# driver; bin 1 (177-369 Hz, where sung fundamentals live) is
+# half-weight and gated by bin 0's activity.
 _BASS_BIN1_WEIGHT = 0.5
 _BASS_BIN1_GATE_FULL = 0.20
+_BASS_CONTRAST_EXP = 3
+_BASS_LEVEL_GAIN = 1.5
+_BASS_LEVEL_THRESHOLD = 0.20
+_BASS_LEVEL_RISE = 0.95
+_BASS_LEVEL_DECAY = 0.50
 # Onset peaks: strength gate, boost scale, decay window.
 _PEAK_MIN_STRENGTH = 0.1
 _PEAK_BOOST_SCALE = 0.3
@@ -171,20 +177,19 @@ MODE_PRESETS: dict[str, ModePreset] = {
         onset_boost=0.0, bass_brightness_scale=0.6, band_bin_max=3,
     ),
     const.MODE_BASS: ModePreset(
-        # Dedicated Bass mode (per Mikhail, Nov 3 2026; v2 same day,
-        # rebuilt on his LedFx Filter recipe): a single shared
-        # envelope drives every channel together — bin 0 (20-177 Hz)
-        # dominant with squared (peak-isolation) contrast, bin 1
-        # (177-369 Hz) half-weight and gated by bin 0, matching LedFx's
-        # Beat <100 Hz / Bass 100-250 Hz selectivity — so the room pops
-        # as one on kicks and low-end thumps, rests dim in between,
-        # and a voice fundamental in bin 1 alone cannot move it. No
-        # beat pulse (pulse_peak 1.0), no peak boost and no peak
-        # palette walk (palette_advance 0.0): colors only drift
-        # slowly. Sustained bass settles back toward the floor as the
-        # transient baseline catches up — thumps, not flicker.
+        # Dedicated Bass mode (per Mikhail, Nov 3 2026; v3 same day):
+        # brightness follows the smoothed LEVEL of the low band, the
+        # way his LedFx Filter bulbs behave — cubed contrast on bins
+        # 0-1, bin 0 dominant, bin 1 half-weight and gated by bin 0,
+        # above a 0.20 threshold (see the _BASS_LEVEL_* constants).
+        # Kicks and drops light the room, sustained bass stays lit
+        # (LedFx does the same), gaps fall back to the dim floor
+        # within ~200 ms, and vocal content — whose residue in the
+        # low bins the contrast crushes — stays at the floor. No beat
+        # pulse (pulse_peak 1.0), no peak boost and no peak palette
+        # walk (palette_advance 0.0): colors only drift slowly.
         pulse_peak=1.0, downbeat_pulse_peak=1.0,
-        beat_animation_fraction=0.2, channel_transient_scale=8.0,
+        beat_animation_fraction=0.2, channel_transient_scale=0.0,
         color_gradient_spread=0.5, palette_advance=0.0,
         spatial_drift_per_second=0.05, channel_floor=0.15, channel_max=1.00,
         onset_boost=0.0, bass_saturation_scale=0.5, band_bin_max=1,
@@ -249,10 +254,7 @@ class LifxAudioAnalyzer:
         self._bass_saturation = _BASS_SAT_MIN
         self._bass_swing = 0.0  # normalized bass transient, 0.0-1.0
         self._pump_baseline = 0.0  # slow baseline for the pump band
-        self._bass_env_fast = _ExpFilter(_CHANNEL_RISE, _CHANNEL_DECAY)
-        self._bass_env_baseline = _ExpFilter(
-            _BASS_ENV_BASELINE_ALPHA, _BASS_ENV_BASELINE_ALPHA
-        )
+        self._bass_level = 0.0  # smoothed low-band level (Bass mode)
         self._peak_boost = 0.0
         self._peak_set_at_us: int | None = None
         self._peak_palette_position = 0.0
@@ -371,8 +373,7 @@ class LifxAudioAnalyzer:
         self._peak_palette_position = 0.0
         self._bass_swing = 0.0
         self._pump_baseline = 0.0
-        self._bass_env_fast.value = 0.0
-        self._bass_env_baseline.value = 0.0
+        self._bass_level = 0.0
 
     # -- promotion / consumption ------------------------------------------
 
@@ -381,6 +382,21 @@ class LifxAudioAnalyzer:
         while self._pending_spectrum and self._pending_spectrum[0][0] <= now_us:
             _, bins = self._pending_spectrum.popleft()
             self._spectrum = list(bins)
+            if self._preset.bass_only and bins:
+                deep = bins[0] ** _BASS_CONTRAST_EXP
+                energy = deep
+                if len(bins) > 1:
+                    gate = min(1.0, deep / _BASS_BIN1_GATE_FULL)
+                    energy += (
+                        _BASS_BIN1_WEIGHT * gate * bins[1] ** _BASS_CONTRAST_EXP
+                    )
+                energy = min(1.5, energy) * _BASS_LEVEL_GAIN
+                alpha = (
+                    _BASS_LEVEL_RISE
+                    if energy > self._bass_level
+                    else _BASS_LEVEL_DECAY
+                )
+                self._bass_level += (energy - self._bass_level) * alpha
             bass_count = min(_BASS_SAT_BINS, len(bins))
             if not bass_count:
                 continue
@@ -469,31 +485,19 @@ class LifxAudioAnalyzer:
         self._ensure_filters()
         bins = self._spectrum
         if self._preset.bass_only:
-            # One shared low-end envelope for every channel, built the
-            # LedFx way: squared contrast on the low bins (which also
-            # undoes this pipeline's sqrt gamma for those bins), bin 0
-            # dominant, bin 1 half-weight and gated by bin 0 — a vocal
-            # fundamental in bin 1 alone earns nothing. The envelope
-            # runs through a dedicated fast/slow filter pair, so all
-            # lights pop together on a thump and sustained bass
-            # settles back to the floor. The hard per-channel minimum
-            # does not apply here — it would override this mode's
-            # deliberately low rest floor.
-            deep = bins[0] ** 2
-            energy = deep
-            if len(bins) > 1:
-                gate = min(1.0, deep / _BASS_BIN1_GATE_FULL)
-                energy += _BASS_BIN1_WEIGHT * gate * bins[1] ** 2
-            energy = min(1.0, energy)
-            fast = self._bass_env_fast.update(energy)
-            baseline = self._bass_env_baseline.update(energy)
-            transient = max(0.0, fast - baseline - _BASS_ENV_DEADBAND)
-            modulation = min(
-                1.0, transient * self._preset.channel_transient_scale
+            # Brightness = the low-band level tracked per spectrum
+            # frame in _advance_spectrum (LedFx-style level following),
+            # mapped from the threshold up to full. One shared value
+            # for every channel, so the room moves as one. The hard
+            # per-channel minimum does not apply here — it would
+            # override this mode's deliberately low rest floor.
+            drive = clamp(
+                (self._bass_level - _BASS_LEVEL_THRESHOLD)
+                / (1.0 - _BASS_LEVEL_THRESHOLD)
             )
             floor = self._effective_channel_floor()
             return [
-                floor + (self._preset.channel_max - floor) * modulation
+                floor + (self._preset.channel_max - floor) * drive
             ] * n
         bin_cap = self._preset.band_bin_max
         usable = min(

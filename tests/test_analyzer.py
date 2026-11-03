@@ -378,7 +378,11 @@ class TestBassMode(unittest.TestCase):
             [c.rgb for c in plain.render(2_000_000)],
         )
 
-    def test_sustained_bass_settles_toward_the_floor(self):
+    def test_sustained_bass_stays_lit_then_releases_on_quiet(self):
+        # Level following (LedFx behavior): a sustained bass passage
+        # keeps the lights up — it must NOT suppress itself the way a
+        # transient-vs-baseline design does — and when the bass stops,
+        # the level decays back to the floor within a few frames.
         analyzer = self._analyzer()
         for i in range(10):
             analyzer.queue_spectrum(1_000_000 + i * 50_000, self.QUIET_FRAME)
@@ -392,4 +396,10 @@ class TestBassMode(unittest.TestCase):
             if first is None:
                 first = total
             last = total
-        self.assertLess(last, first)
+        self.assertGreaterEqual(last, first * 0.8)
+        quiet_total = None
+        for i in range(30):
+            ts = 6_000_000 + i * 50_000
+            analyzer.queue_spectrum(ts, self.QUIET_FRAME)
+            quiet_total = _total(analyzer.render(ts))
+        self.assertLess(quiet_total, last * 0.4)
