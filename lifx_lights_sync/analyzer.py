@@ -109,6 +109,12 @@ class ModePreset:
     # Extra global brightness lift from the bass-band transient, added
     # to every channel multiplier (room-wide kick pump). 0 = Hue stock.
     bass_brightness_scale: float = 0.0
+    # Highest spectrum bin feeding the per-channel brightness bands.
+    # None = the standard cap (_CHANNEL_BIN_MAX). The bass-heavy
+    # Energetic tuning restricts brightness to bins 0-3 (~20-500 Hz:
+    # deep bass + mid-bass), mirroring the LedFx Filter effect's
+    # low-band power ranges, so voice/instruments don't move the lights.
+    band_bin_max: int | None = None
 
 
 MODE_PRESETS: dict[str, ModePreset] = {
@@ -132,11 +138,17 @@ MODE_PRESETS: dict[str, ModePreset] = {
         spatial_drift_per_second=0.05, channel_floor=0.45, channel_max=0.80,
     ),
     const.MODE_ENERGETIC: ModePreset(
+        # Bass-heavy tuning (per Mikhail, modeled on his LedFx
+        # "Master bathroom on" Filter scenes): brightness reacts only
+        # to deep bass + mid-bass (~20-500 Hz, bins 0-3) — kicks and
+        # low end pump the room; voice and instruments do not. The
+        # broadband onset-peak flash is off for the same reason (peaks
+        # still walk the palette).
         pulse_peak=1.2, downbeat_pulse_peak=1.2,
         beat_animation_fraction=0.2, channel_transient_scale=8.0,
         color_gradient_spread=1.0, palette_advance=0.5,
         spatial_drift_per_second=0.15, channel_floor=0.30, channel_max=1.00,
-        bass_brightness_scale=0.6,
+        onset_boost=0.0, bass_brightness_scale=0.6, band_bin_max=3,
     ),
 }
 
@@ -192,6 +204,7 @@ class LifxAudioAnalyzer:
         self._bass_baseline = 0.0
         self._bass_saturation = _BASS_SAT_MIN
         self._bass_swing = 0.0  # normalized bass transient, 0.0-1.0
+        self._pump_baseline = 0.0  # slow baseline for the pump band
         self._peak_boost = 0.0
         self._peak_set_at_us: int | None = None
         self._peak_palette_position = 0.0
@@ -291,6 +304,7 @@ class LifxAudioAnalyzer:
         self._peak_set_at_us = None
         self._peak_palette_position = 0.0
         self._bass_swing = 0.0
+        self._pump_baseline = 0.0
 
     # -- promotion / consumption ------------------------------------------
 
@@ -308,10 +322,27 @@ class LifxAudioAnalyzer:
             ) * _BASS_BASELINE_SMOOTHING
             bass_transient = max(0.0, bass_energy - self._bass_baseline)
             swing_raw = min(1.0, bass_transient * _BASS_TRANSIENT_SCALE)
-            # The brightness pump follows the same swing with fast rise /
-            # slow decay per promoted frame, so kicks thump then settle.
-            swing_alpha = _BASS_SAT_RISE if swing_raw > self._bass_swing else _BASS_SAT_DECAY
-            self._bass_swing += (swing_raw - self._bass_swing) * swing_alpha
+            # The brightness pump follows the low-band transient (deep
+            # bass + mid-bass when the mode restricts the band) with a
+            # fast rise / slow decay per promoted frame, so kicks thump
+            # then settle.
+            pump_count = bass_count
+            if self._preset.band_bin_max is not None:
+                pump_count = min(self._preset.band_bin_max + 1, len(bins))
+            if pump_count != bass_count:
+                pump_energy = sum(bins[:pump_count]) / pump_count
+                self._pump_baseline += (
+                    pump_energy - self._pump_baseline
+                ) * _BASS_BASELINE_SMOOTHING
+                pump_raw = min(
+                    1.0,
+                    max(0.0, pump_energy - self._pump_baseline)
+                    * _BASS_TRANSIENT_SCALE,
+                )
+            else:
+                pump_raw = swing_raw
+            swing_alpha = _BASS_SAT_RISE if pump_raw > self._bass_swing else _BASS_SAT_DECAY
+            self._bass_swing += (pump_raw - self._bass_swing) * swing_alpha
             swing = self._preset.bass_saturation_scale * swing_raw
             sat_target = _BASS_SAT_MIN + (_BASS_SAT_MAX - _BASS_SAT_MIN) * swing
             alpha = _BASS_SAT_RISE if sat_target > self._bass_saturation else _BASS_SAT_DECAY
@@ -369,10 +400,13 @@ class LifxAudioAnalyzer:
             return [1.0] * n
         self._ensure_filters()
         bins = self._spectrum
+        bin_cap = self._preset.band_bin_max
+        usable = min(
+            _CHANNEL_BIN_MAX if bin_cap is None else bin_cap, len(bins) - 1
+        ) + 1
         if n == 1:
-            energy = sum(bins) / len(bins)
+            energy = sum(bins[:usable]) / usable
             return [max(_PER_CHANNEL_MIN_MULT, self._transient_multiplier(0, energy))]
-        usable = min(_CHANNEL_BIN_MAX, len(bins) - 1) + 1
         multipliers = []
         for i in range(n):
             lo = (i * usable) // n

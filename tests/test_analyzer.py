@@ -235,7 +235,7 @@ class TestBassBrightnessPump(unittest.TestCase):
 
     ONE = [LightChannel("aaaa00000001", 0.0)]
     BASS_FRAME = [45000.0, 45000.0] + [100.0] * 15
-    TREBLE_FRAME = [100.0, 100.0] + [45000.0] * 2 + [100.0] * 13
+    TREBLE_FRAME = [100.0] * 10 + [45000.0] * 2 + [100.0] * 5
 
     def _run(self, mode, frame):
         analyzer = LifxAudioAnalyzer(
@@ -253,8 +253,28 @@ class TestBassBrightnessPump(unittest.TestCase):
             self._run("energetic", self.TREBLE_FRAME),
         )
 
-    def test_smooth_has_no_bass_pump(self):
-        self.assertEqual(
-            self._run("smooth", self.BASS_FRAME),
-            self._run("smooth", self.TREBLE_FRAME),
+    def test_energetic_ignores_high_frequencies(self):
+        # Bins above the low band (voice/instruments) must not move
+        # the light at all in the bass-heavy mode.
+        quiet = LifxAudioAnalyzer(
+            self.ONE, mode="energetic", brightness=0.8, palette=FLAT_PALETTE
         )
+        for i in range(10):
+            quiet.queue_spectrum(1_000_000 + i * 50_000, [1000.0] * 17)
+        quiet.render(1_500_000)
+        quiet_total = _total(quiet.render(2_000_000))
+        high_total = self._run("energetic", self.TREBLE_FRAME)
+        self.assertEqual(high_total, quiet_total)
+
+    def test_smooth_still_reacts_to_high_frequencies(self):
+        # The band restriction is Energetic-only: Smooth keeps the
+        # full-range response, so a loud high frame changes its output.
+        quiet = LifxAudioAnalyzer(
+            self.ONE, mode="smooth", brightness=0.8, palette=FLAT_PALETTE
+        )
+        for i in range(10):
+            quiet.queue_spectrum(1_000_000 + i * 50_000, [1000.0] * 17)
+        quiet.render(1_500_000)
+        quiet_total = _total(quiet.render(2_000_000))
+        high_total = self._run("smooth", self.TREBLE_FRAME)
+        self.assertNotEqual(high_total, quiet_total)
