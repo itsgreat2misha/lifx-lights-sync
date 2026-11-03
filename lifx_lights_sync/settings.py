@@ -43,6 +43,14 @@ def _as_choice(value: Any, choices: tuple[str, ...], default: str) -> str:
     return text if text in choices else default
 
 
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 # -- Hue-style readers (take the ProviderConfig) ---------------------------
 
 
@@ -114,6 +122,14 @@ def get_send_rate_hz(config: ProviderConfig) -> int:
     )
 
 
+def get_debug_frame_log(config: ProviderConfig) -> bool:
+    """Return True when per-second commanded-brightness logging is on."""
+    return _as_bool(
+        config.get_value(const.CONF_DEBUG_FRAME_LOG),
+        const.DEFAULT_DEBUG_FRAME_LOG,
+    )
+
+
 # -- Bundled settings object -------------------------------------------------
 
 
@@ -129,6 +145,7 @@ class PluginSettings:
     color_mode: str = const.DEFAULT_COLOR_MODE
     latency_ms: int = const.DEFAULT_LATENCY_MS
     send_rate_hz: int = const.DEFAULT_SEND_RATE_HZ
+    debug_frame_log: bool = const.DEFAULT_DEBUG_FRAME_LOG
 
     @property
     def brightness(self) -> float:
@@ -191,6 +208,10 @@ class PluginSettings:
                 const.MIN_SEND_RATE_HZ,
                 const.MAX_SEND_RATE_HZ,
             ),
+            debug_frame_log=_as_bool(
+                values.get(const.CONF_DEBUG_FRAME_LOG),
+                const.DEFAULT_DEBUG_FRAME_LOG,
+            ),
         )
 
     @classmethod
@@ -208,6 +229,7 @@ class PluginSettings:
             color_mode=get_color_mode(config),
             latency_ms=get_latency_ms(config),
             send_rate_hz=get_send_rate_hz(config),
+            debug_frame_log=get_debug_frame_log(config),
         )
 
 
@@ -216,6 +238,7 @@ __all__ = [
     "get_brightness",
     "get_brightness_floor",
     "get_color_mode",
+    "get_debug_frame_log",
     "get_discovery_source",
     "get_ha_token",
     "get_ha_url",

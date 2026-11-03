@@ -167,6 +167,14 @@ class LifxLightsSyncProvider(PluginProvider):
                 immediate_apply=True,
                 category="settings",
             ),
+            ConfigEntry(
+                key=const.CONF_DEBUG_FRAME_LOG,
+                type=ConfigEntryType.BOOLEAN,
+                default_value=const.DEFAULT_DEBUG_FRAME_LOG,
+                required=False,
+                immediate_apply=True,
+                category="settings",
+            ),
         )
 
     async def loaded_in_mass(self) -> None:

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
 
@@ -125,6 +126,11 @@ class LifxTargetBridge:
         self._render_handle: asyncio.TimerHandle | None = None
         settings = provider.settings
         self._latency_us: int = settings.latency_us
+        # Debug frame-log aggregation (see _note_frame_for_debug_log).
+        self._dbg_sum = 0.0
+        self._dbg_max = 0.0
+        self._dbg_ticks = 0
+        self._dbg_window_start = 0.0
 
     @property
     def streaming(self) -> bool:
@@ -363,6 +369,34 @@ class LifxTargetBridge:
 
     # -- render loop ---------------------------------------------------------
 
+    def _note_frame_for_debug_log(self, commands: list) -> None:
+        """Aggregate commanded brightness; emit one FRAMELOG line/second.
+
+        Read-only observation of what the analyzer commanded (the max
+        RGB channel per command, 0.0-1.0) — it never touches the send
+        path, so enabling it cannot alter the effect. Lets a test be
+        judged from the server log instead of by watching the room.
+        """
+        level = sum(max(cmd.rgb) for cmd in commands) / (255.0 * len(commands))
+        now = time.monotonic()
+        if self._dbg_ticks == 0:
+            self._dbg_window_start = now
+        self._dbg_sum += level
+        self._dbg_max = max(self._dbg_max, level)
+        self._dbg_ticks += 1
+        if now - self._dbg_window_start >= 1.0:
+            bass = self._analyzer.bass_level if self._analyzer else 0.0
+            self.logger.info(
+                "FRAMELOG target=%s mean=%.3f max=%.3f bass=%.3f",
+                self.target.name,
+                self._dbg_sum / self._dbg_ticks,
+                self._dbg_max,
+                bass,
+            )
+            self._dbg_sum = 0.0
+            self._dbg_max = 0.0
+            self._dbg_ticks = 0
+
     def _start_render_loop(self) -> None:
         """Begin the fixed-rate render+send loop."""
         if self._render_handle is not None:
@@ -389,6 +423,8 @@ class LifxTargetBridge:
                 # moment from its lookahead queue.
                 server_now = self.sendspin_server.clock.now_us() + self._latency_us
                 commands = self._analyzer.render(server_now)
+                if commands and self.provider.settings.debug_frame_log:
+                    self._note_frame_for_debug_log(commands)
                 # The LIFX sender is async (unlike Hue's sync DTLS
                 # send): hand the frame to a task, and skip this tick
                 # if the previous frame is still being written so sends

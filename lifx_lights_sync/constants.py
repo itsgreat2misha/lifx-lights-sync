@@ -17,6 +17,7 @@ CONF_BRIGHTNESS_FLOOR = "brightness_floor"
 CONF_COLOR_MODE = "color_mode"
 CONF_LATENCY_MS = "latency_ms"
 CONF_SEND_RATE_HZ = "send_rate_hz"
+CONF_DEBUG_FRAME_LOG = "debug_frame_log"
 
 # --- Discovery sources ---
 SOURCE_AUTO = "auto"  # MA hass provider, then direct HA, then LAN
@@ -34,6 +35,7 @@ DEFAULT_BRIGHTNESS_FLOOR = 0  # percent (lower bound: rest level; 0 = per-mode d
 DEFAULT_COLOR_MODE = "smooth"
 DEFAULT_LATENCY_MS = 0
 DEFAULT_SEND_RATE_HZ = 20
+DEFAULT_DEBUG_FRAME_LOG = False
 
 # Brightness is configured as a percentage so the UI matches Music
 # Assistant conventions; internally the analyzer works with 0.0-1.0.
@@ -101,6 +103,7 @@ __all__ = [
     "CONF_HA_TOKEN",
     "CONF_HA_URL",
     "CONF_LATENCY_MS",
+    "CONF_DEBUG_FRAME_LOG",
     "CONF_SEND_RATE_HZ",
     "DEFAULT_BRIGHTNESS",
     "DEFAULT_COLOR_MODE",
@@ -109,6 +112,7 @@ __all__ = [
     "DEFAULT_HA_URL",
     "DEFAULT_KELVIN",
     "DEFAULT_LATENCY_MS",
+    "DEFAULT_DEBUG_FRAME_LOG",
     "DEFAULT_SEND_RATE_HZ",
     "DISCOVERY_SOURCES",
     "DOMAIN",

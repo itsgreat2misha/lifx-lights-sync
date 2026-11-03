@@ -269,6 +269,11 @@ class LifxAudioAnalyzer:
     def mode(self) -> str:
         return self._mode
 
+    @property
+    def bass_level(self) -> float:
+        """Smoothed low-band level (Bass mode's brightness driver)."""
+        return self._bass_level
+
     def set_mode(self, mode: str) -> None:
         if mode in MODE_PRESETS:
             self._mode = mode
