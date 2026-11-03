@@ -381,7 +381,9 @@ class LifxSender:
             if max(rgb) > 0:
                 await self._ensure_power(serial, device)
             try:
-                await device.set_color(self._to_hsbk(rgb))
+                # A short transition blends the discrete render steps
+                # into continuous motion instead of visible flicker.
+                await device.set_color(self._to_hsbk(rgb), duration=0.12)
             except Exception:  # noqa: BLE001
                 _LOGGER.warning("set_color failed for %s", serial, exc_info=True)
 
@@ -422,7 +424,7 @@ class LifxSender:
             ]
             # set_downlight_colors only touches zones before the uplight
             # zone, so the uplight keeps whatever color it already had.
-            await device.set_downlight_colors(colors)
+            await device.set_downlight_colors(colors, duration=0.12)
             return
 
         colors = [
@@ -439,8 +441,9 @@ class LifxSender:
         # synchronous Animator.send_frame() with uint16 HSBK tuples) is
         # the library's fast path; set_matrix_colors is the confirmed
         # simple path and is what we ship until frame rates are measured
-        # on real hardware.
-        await device.set_matrix_colors(0, colors, duration=0)
+        # on real hardware. The 120 ms duration (matrix API takes ms)
+        # blends render steps like the bulb path's 0.12 s.
+        await device.set_matrix_colors(0, colors, duration=120)
 
     async def close(self) -> None:
         """Close all device connections owned by this sender."""

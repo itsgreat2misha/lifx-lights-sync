@@ -5,9 +5,13 @@ A simplified, stdlib-only port of the Hue Lights Sync analyzer
 
 Inputs arrive timestamped (microseconds, Sendspin clock) and are queued:
 spectrum frames, peak levels, beat events, and the server album palette.
-:meth:`LifxAudioAnalyzer.render` is then called with the current (latency
-compensated) time and returns exactly one :class:`LightColorCommand` per
-channel.
+The extraction pipeline delivers frames well ahead of the playhead
+(a ~30 s lookahead on current MA builds), so frames are *promoted* —
+applied to the filter banks — only when :meth:`LifxAudioAnalyzer.render`
+is called with a time at or past their timestamp. Rendering therefore
+always reflects the audio due at that moment, never future audio.
+:meth:`LifxAudioAnalyzer.render` returns exactly one
+:class:`LightColorCommand` per channel.
 
 Per-mode behavior is driven by :data:`MODE_PRESETS`:
 
@@ -32,8 +36,12 @@ from typing import Sequence
 from . import constants as const
 from .color import RGB, build_palette, clamp, palette_color_at, scale_rgb
 
-# How long spectrum/beat history is retained (microseconds).
-_HISTORY_US = 2_000_000
+# How long beat/peak history is retained behind the render time
+# (microseconds). Queued spectrum frames are held until they come due
+# regardless of this window — they arrive up to ~30 s ahead of the
+# playhead — with a hard cap as a safety valve (_MAX_PENDING_SPECTRUM).
+_HISTORY_US = 10_000_000
+_MAX_PENDING_SPECTRUM = 6000
 # Onset (transient) boost decay time from the Hue blueprint.
 _ONSET_DECAY_US = 250_000
 
@@ -83,16 +91,16 @@ class ModePreset:
 
 MODE_PRESETS: dict[str, ModePreset] = {
     const.MODE_SMOOTH: ModePreset(
-        base_factor=0.85, spectrum_weight=0.35, pulse_amount=0.25,
-        pulse_decay_us=600_000, onset_amount=0.15,
+        base_factor=0.85, spectrum_weight=0.55, pulse_amount=0.35,
+        pulse_decay_us=600_000, onset_amount=0.35,
         advance_on_downbeat_only=True,
-        fast_alpha=0.35, slow_alpha=0.05, smoothing=0.25,
+        fast_alpha=0.5, slow_alpha=0.04, smoothing=0.45,
     ),
     const.MODE_AMBIENT: ModePreset(
-        base_factor=0.6, spectrum_weight=0.15, pulse_amount=0.0,
+        base_factor=0.6, spectrum_weight=0.3, pulse_amount=0.0,
         pulse_decay_us=600_000, onset_amount=0.0,
         advance_on_downbeat_only=True,
-        fast_alpha=0.15, slow_alpha=0.03, smoothing=0.12,
+        fast_alpha=0.3, slow_alpha=0.03, smoothing=0.3,
     ),
     const.MODE_FLASHING: ModePreset(
         base_factor=0.9, spectrum_weight=0.6, pulse_amount=1.0,
@@ -131,6 +139,7 @@ class LifxAudioAnalyzer:
         self._palette: list[RGB] = list(palette) if palette else build_palette(None)
 
         self._spectrum: deque[tuple[int, tuple[float, ...]]] = deque()
+        self._active_spectrum: tuple[float, ...] | None = None
         self._beats: deque[_Beat] = deque()
         self._peaks: deque[tuple[int, int]] = deque()
 
@@ -190,18 +199,19 @@ class LifxAudioAnalyzer:
             scale = 1.0
         normalized = tuple(clamp(float(value) / scale) for value in bins)
         self._spectrum.append((int(timestamp_us), normalized))
-        self._update_filters(normalized)
-        self._prune(int(timestamp_us))
+        # No filter update and no pruning here: frames arrive ahead of
+        # the playhead, so both happen at promotion time in render().
+        if len(self._spectrum) > _MAX_PENDING_SPECTRUM:
+            for _ in range(1000):
+                self._spectrum.popleft()
 
     def queue_peak(self, timestamp_us: int, peak: int) -> None:
         """Queue a peak level (0-255)."""
         self._peaks.append((int(timestamp_us), max(0, min(255, int(peak)))))
-        self._prune(int(timestamp_us))
 
     def queue_beat(self, timestamp_us: int, is_downbeat: bool = False) -> None:
         """Queue a beat event; downbeats mark the start of a bar."""
         self._beats.append(_Beat(int(timestamp_us), bool(is_downbeat)))
-        self._prune(int(timestamp_us))
 
     def queue_onset(self, timestamp_us: int) -> None:
         """Register an onset (transient) at the given time.
@@ -221,19 +231,28 @@ class LifxAudioAnalyzer:
     def clear_queues(self) -> None:
         """Drop queued spectrum/peak data (seek: pre-seek audio is stale)."""
         self._spectrum.clear()
+        self._active_spectrum = None
         self._peaks.clear()
         self._onset_us = None
 
     # -- internals ---------------------------------------------------------
 
     def _prune(self, now_us: int) -> None:
+        # Spectrum frames are deliberately not pruned here: the pending
+        # deque holds future frames (up to ~30 s of lookahead) that must
+        # survive until they come due; render() drains them by promotion.
         cutoff = now_us - _HISTORY_US
-        while self._spectrum and self._spectrum[0][0] < cutoff:
-            self._spectrum.popleft()
         while self._peaks and self._peaks[0][0] < cutoff:
             self._peaks.popleft()
         while self._beats and self._beats[0].timestamp_us < cutoff:
             self._beats.popleft()
+
+    def _promote_spectrum(self, now_us: int) -> None:
+        """Apply every spectrum frame due at ``now_us`` to the filters."""
+        while self._spectrum and self._spectrum[0][0] <= now_us:
+            _, bins = self._spectrum.popleft()
+            self._update_filters(bins)
+            self._active_spectrum = bins
 
     def _update_filters(self, bins: tuple[float, ...]) -> None:
         preset = self._preset
@@ -243,14 +262,6 @@ class LifxAudioAnalyzer:
         for index, value in enumerate(bins):
             self._fast_bins[index] += preset.fast_alpha * (value - self._fast_bins[index])
             self._slow_bins[index] += preset.slow_alpha * (value - self._slow_bins[index])
-
-    def _latest_spectrum(self, now_us: int) -> tuple[float, ...] | None:
-        latest: tuple[float, ...] | None = None
-        for timestamp_us, bins in self._spectrum:
-            if timestamp_us > now_us:
-                break
-            latest = bins
-        return latest
 
     def _channel_energy(self, channel: LightChannel) -> tuple[float, float]:
         """Return (level, transient) for a channel from the filter banks."""
@@ -303,10 +314,11 @@ class LifxAudioAnalyzer:
         """Render one command per channel for the given timestamp."""
         now_us = int(now_us)
         self._prune(now_us)
+        self._promote_spectrum(now_us)
         self._process_beats(now_us)
         preset = self._preset
         pulse = self._pulse_value(now_us)
-        has_spectrum = self._latest_spectrum(now_us) is not None
+        has_spectrum = self._active_spectrum is not None
 
         commands: list[LightColorCommand] = []
         for channel in self._channels:

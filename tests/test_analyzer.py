@@ -167,3 +167,35 @@ class TestSpectrumEncoding(unittest.TestCase):
             _total(quiet),
             "uint16 spectrum frames must modulate the output brightness",
         )
+
+
+class TestPlayheadPromotion(unittest.TestCase):
+    def test_future_frames_do_not_affect_render_until_due(self):
+        # Frames arrive ahead of the playhead (~30 s lookahead from the
+        # extraction pipeline). A frame must not change the output until
+        # render time reaches its timestamp.
+        analyzer = LifxAudioAnalyzer(CHANNELS, mode="smooth", brightness=0.8)
+        analyzer.queue_spectrum(31_000_000, [45000.0] * 17)
+        early = analyzer.render(1_000_000)
+        due = analyzer.render(31_000_000)
+        self.assertGreater(_total(due), _total(early))
+
+    def test_lookahead_burst_survives_until_due(self):
+        # Regression: queue-time pruning/filtering used to destroy
+        # lookahead frames before their moment, freezing the output.
+        analyzer = LifxAudioAnalyzer(CHANNELS, mode="smooth", brightness=0.8)
+        base = 100_000_000
+        for i in range(100):
+            analyzer.queue_spectrum(base + 30_000_000 + i * 50_000, [45000.0] * 17)
+        before = analyzer.render(base)
+        after = analyzer.render(base + 35_000_000)
+        self.assertGreater(_total(after), _total(before))
+
+    def test_beat_schedule_pushed_ahead_is_not_pruned(self):
+        analyzer = LifxAudioAnalyzer(CHANNELS, mode="energetic", brightness=0.8)
+        analyzer.queue_spectrum(1_000_000, [0.5] * 17)
+        analyzer.queue_beat(61_000_000, is_downbeat=True)
+        analyzer.render(1_000_000)
+        index_before = analyzer._palette_index
+        analyzer.render(61_500_000)
+        self.assertNotEqual(analyzer._palette_index, index_before)

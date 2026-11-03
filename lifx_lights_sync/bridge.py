@@ -125,9 +125,6 @@ class LifxTargetBridge:
         self._render_handle: asyncio.TimerHandle | None = None
         settings = provider.settings
         self._latency_us: int = settings.latency_us
-        # Learned skew between visualizer frame timestamps and the
-        # Sendspin server clock (see _on_visualizer_frame).
-        self._frame_offset_us: int = 0
 
     @property
     def streaming(self) -> bool:
@@ -268,9 +265,6 @@ class LifxTargetBridge:
 
     def _on_stream_start(self) -> None:
         """Handle stream start — snapshot lights and begin rendering."""
-        # A new stream may run on a different frame timeline; re-learn
-        # the frame/clock skew from scratch.
-        self._frame_offset_us = 0
         # Cancel any pending stop from a previous stream end (track transition).
         if self._stop_debounce_task and not self._stop_debounce_task.done():
             self._stop_debounce_task.cancel()
@@ -318,17 +312,11 @@ class LifxTargetBridge:
 
     def _on_visualizer_frame(self, frame: ExtractedFrame) -> None:
         """Queue spectrum and onset-peak features for the renderer."""
-        # The extraction pipeline timestamps frames ahead of the server
-        # clock (a constant ~30 s lookahead on current MA builds).
-        # Learn that skew so the render clock can run on the frame
-        # timeline; without it every frame looks like it is "in the
-        # future" and the analyzer never sees a current spectrum.
-        offset = frame.timestamp_us - self.sendspin_server.clock.now_us()
-        if 0 < offset < 300_000_000 and offset > self._frame_offset_us:
-            self._frame_offset_us = offset
-        # Frames arrive ahead of the playhead; the analyzer queues them
-        # by timestamp and drains at render time. Gated so the queues
-        # only fill while the lights are up or coming up.
+        # Frames arrive ahead of the playhead (the extraction pipeline
+        # runs with a ~30 s lookahead); the analyzer queues them by
+        # timestamp and promotes each one when the render clock reaches
+        # it, so rendering tracks the audible playhead. Gated so the
+        # queues only fill while the lights are up or coming up.
         if self._analyzer is None or not (self._is_streaming or self._starting):
             return
         if frame.spectrum is not None:
@@ -394,14 +382,10 @@ class LifxTargetBridge:
             return
         try:
             if self._analyzer is not None:
-                # Render on the frame timeline (server clock + learned
-                # frame skew), slightly ahead of the playhead to
-                # compensate for LIFX/Wi-Fi lag (latency setting).
-                server_now = (
-                    self.sendspin_server.clock.now_us()
-                    + self._frame_offset_us
-                    + self._latency_us
-                )
+                # Render at the (latency compensated) server time; the
+                # analyzer promotes whichever frame is due at that
+                # moment from its lookahead queue.
+                server_now = self.sendspin_server.clock.now_us() + self._latency_us
                 commands = self._analyzer.render(server_now)
                 # The LIFX sender is async (unlike Hue's sync DTLS
                 # send): hand the frame to a task, and skip this tick
