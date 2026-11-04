@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install lint tools
+        run: pip install ruff==0.17.3 mypy==2.4.1
+      - name: Ruff check
+        run: ruff check lifx_lights_sync tests
+      - name: Ruff format check
+        run: ruff format --check lifx_lights_sync tests
+      - name: Mypy
+        run: mypy
+      - name: Validate JSON
+        run: |
+          python -m json.tool lifx_lights_sync/manifest.json > /dev/null
+          python -m json.tool lifx_lights_sync/strings.json > /dev/null
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
