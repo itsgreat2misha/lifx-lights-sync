@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lifx_lights_sync.discovery import (  # noqa: E402
+from lifx_lights_sync.discovery import (
     HaLifxLight,
     LanDevice,
     apply_ha_hosts,
@@ -262,8 +262,11 @@ class TestMergeTargets(unittest.TestCase):
     def test_include_lan_only_false_drops_unknown_lan_devices(self):
         ha_lights = [
             HaLifxLight(
-                serial=SERIAL_A, name="Known", area_name=None,
-                entity_ids=("light.known",), host="192.0.2.10",
+                serial=SERIAL_A,
+                name="Known",
+                area_name=None,
+                entity_ids=("light.known",),
+                host="192.0.2.10",
             )
         ]
         lan = [LanDevice(serial=SERIAL_B, ip="192.0.2.50", name="Stranger")]

@@ -1,4 +1,5 @@
-"""Audio analysis: Sendspin visualizer data -> per-channel light colors.
+"""
+Audio analysis: Sendspin visualizer data -> per-channel light colors.
 
 A stdlib-only port of the Hue Lights Sync analyzer
 (``music-assistant/server`` providers/hue_entertainment/analyzer.py),
@@ -26,8 +27,8 @@ No Music Assistant imports: everything here is unit-testable.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from . import constants as const
 from .color import RGB, build_palette, clamp
@@ -56,10 +57,10 @@ _BASS_SAT_RISE = 0.8
 _BASS_SAT_DECAY = 0.08
 # Bass mode is a LEVEL follower, the way LedFx's Filter effect works:
 # its Beat/Bass bulbs track smoothed band level, not transients. A
-# fast/slow transient pair inverts on real music — measured on
-# Mikhail's Nov 3 clips, a sustained heavy section suppresses itself
-# as the baseline catches up while sparse vocal phrases keep punching
-# through — so brightness follows the smoothed low-band level above
+# fast/slow transient pair inverts on real music — a sustained heavy
+# section suppresses itself as the baseline catches up while sparse
+# vocal phrases keep punching through — so brightness follows the
+# smoothed low-band level above
 # a threshold, updated once per spectrum frame (20 Hz). Input
 # contrast: the shaped low bins are cubed (effective ^1.5 on the
 # dB-normalized magnitude; LedFx's peak isolation is ^1.96 on its
@@ -86,7 +87,8 @@ _MAX_PENDING_SPECTRUM = 6000
 
 @dataclass(frozen=True)
 class LightChannel:
-    """One renderable channel of a sync target.
+    """
+    One renderable channel of a sync target.
 
     ``position`` is the channel's normalized position (0.0-1.0) inside
     its target: for bulbs in an area it is their order in the group;
@@ -146,53 +148,82 @@ class ModePreset:
 
 MODE_PRESETS: dict[str, ModePreset] = {
     const.MODE_SMOOTH: ModePreset(
-        pulse_peak=1.0, downbeat_pulse_peak=1.0,
-        beat_animation_fraction=0.0, channel_transient_scale=8.0,
-        color_gradient_spread=1.0, palette_advance=0.125,
-        spatial_drift_per_second=0.1, channel_floor=0.60, channel_max=0.85,
+        pulse_peak=1.0,
+        downbeat_pulse_peak=1.0,
+        beat_animation_fraction=0.0,
+        channel_transient_scale=8.0,
+        color_gradient_spread=1.0,
+        palette_advance=0.125,
+        spatial_drift_per_second=0.1,
+        channel_floor=0.60,
+        channel_max=0.85,
     ),
     const.MODE_AMBIENT: ModePreset(
-        pulse_peak=1.0, downbeat_pulse_peak=1.0,
-        beat_animation_fraction=0.1, channel_transient_scale=0.0,
-        color_gradient_spread=0.7, palette_advance=0.125,
-        spatial_drift_per_second=0.0, channel_floor=0.80, channel_max=0.80,
+        pulse_peak=1.0,
+        downbeat_pulse_peak=1.0,
+        beat_animation_fraction=0.1,
+        channel_transient_scale=0.0,
+        color_gradient_spread=0.7,
+        palette_advance=0.125,
+        spatial_drift_per_second=0.0,
+        channel_floor=0.80,
+        channel_max=0.80,
         onset_boost=0.0,
     ),
     const.MODE_FLASHING: ModePreset(
-        pulse_peak=1.8, downbeat_pulse_peak=2.2,
-        beat_animation_fraction=0.0, channel_transient_scale=2.0,
-        color_gradient_spread=0.7, palette_advance=0.25,
-        spatial_drift_per_second=0.05, channel_floor=0.45, channel_max=0.80,
+        pulse_peak=1.8,
+        downbeat_pulse_peak=2.2,
+        beat_animation_fraction=0.0,
+        channel_transient_scale=2.0,
+        color_gradient_spread=0.7,
+        palette_advance=0.25,
+        spatial_drift_per_second=0.05,
+        channel_floor=0.45,
+        channel_max=0.80,
     ),
     const.MODE_ENERGETIC: ModePreset(
-        # Bass-heavy tuning (per Mikhail, modeled on his LedFx
-        # "Master bathroom on" Filter scenes): per-channel brightness
-        # bands and the kick pump use bins 0-3 (20-887 Hz). The
-        # broadband onset-peak flash is off (peaks still walk the
-        # palette), but the beat pulse still fires on every beat.
-        pulse_peak=1.2, downbeat_pulse_peak=1.2,
-        beat_animation_fraction=0.2, channel_transient_scale=8.0,
-        color_gradient_spread=1.0, palette_advance=0.5,
-        spatial_drift_per_second=0.15, channel_floor=0.30, channel_max=1.00,
-        onset_boost=0.0, bass_brightness_scale=0.6, band_bin_max=3,
+        # Bass-heavy tuning, in the style of LedFx Filter scenes
+        # band-limited to the low end: per-channel brightness bands
+        # and the kick pump use bins 0-3 (20-887 Hz). The broadband
+        # onset-peak flash is off (peaks still walk the palette), but
+        # the beat pulse still fires on every beat.
+        pulse_peak=1.2,
+        downbeat_pulse_peak=1.2,
+        beat_animation_fraction=0.2,
+        channel_transient_scale=8.0,
+        color_gradient_spread=1.0,
+        palette_advance=0.5,
+        spatial_drift_per_second=0.15,
+        channel_floor=0.30,
+        channel_max=1.00,
+        onset_boost=0.0,
+        bass_brightness_scale=0.6,
+        band_bin_max=3,
     ),
     const.MODE_BASS: ModePreset(
-        # Dedicated Bass mode (per Mikhail, Nov 3 2026; v3 same day):
-        # brightness follows the smoothed LEVEL of the low band, the
-        # way his LedFx Filter bulbs behave — cubed contrast on bins
-        # 0-1, bin 0 dominant, bin 1 half-weight and gated by bin 0,
-        # above a 0.20 threshold (see the _BASS_LEVEL_* constants).
-        # Kicks and drops light the room, sustained bass stays lit
-        # (LedFx does the same), gaps fall back to the dim floor
-        # within ~200 ms, and vocal content — whose residue in the
-        # low bins the contrast crushes — stays at the floor. No beat
-        # pulse (pulse_peak 1.0), no peak boost and no peak palette
-        # walk (palette_advance 0.0): colors only drift slowly.
-        pulse_peak=1.0, downbeat_pulse_peak=1.0,
-        beat_animation_fraction=0.2, channel_transient_scale=0.0,
-        color_gradient_spread=0.5, palette_advance=0.0,
-        spatial_drift_per_second=0.05, channel_floor=0.15, channel_max=1.00,
-        onset_boost=0.0, bass_saturation_scale=0.5, band_bin_max=1,
+        # Dedicated Bass mode: brightness follows the smoothed LEVEL
+        # of the low band, the way LedFx Filter bulbs behave — cubed
+        # contrast on bins 0-1, bin 0 dominant, bin 1 half-weight and
+        # gated by bin 0, above a 0.20 threshold (see the
+        # _BASS_LEVEL_* constants). Kicks and drops light the room,
+        # sustained bass stays lit (the LedFx behavior does the same),
+        # gaps fall back to the dim floor within ~200 ms, and vocal
+        # content — whose residue in the low bins the contrast
+        # crushes — stays at the floor. No beat pulse (pulse_peak
+        # 1.0), no peak boost and no peak palette walk
+        # (palette_advance 0.0): colors only drift slowly.
+        pulse_peak=1.0,
+        downbeat_pulse_peak=1.0,
+        beat_animation_fraction=0.2,
+        channel_transient_scale=0.0,
+        color_gradient_spread=0.5,
+        palette_advance=0.0,
+        spatial_drift_per_second=0.05,
+        channel_floor=0.15,
+        channel_max=1.00,
+        onset_boost=0.0,
+        bass_saturation_scale=0.5,
+        band_bin_max=1,
         bass_only=True,
     ),
 }
@@ -230,6 +261,7 @@ class LifxAudioAnalyzer:
         brightness_floor: float = 0.0,
         palette: Sequence[RGB] | None = None,
     ) -> None:
+        """Initialize the analyzer for a fixed channel layout."""
         self._channels: list[LightChannel] = list(channels)
         self._mode = mode if mode in MODE_PRESETS else const.DEFAULT_COLOR_MODE
         self._brightness = clamp(float(brightness))
@@ -263,10 +295,12 @@ class LifxAudioAnalyzer:
 
     @property
     def channels(self) -> list[LightChannel]:
+        """The renderable channels, in target order."""
         return list(self._channels)
 
     @property
     def mode(self) -> str:
+        """The active analyzer mode name."""
         return self._mode
 
     @property
@@ -275,17 +309,21 @@ class LifxAudioAnalyzer:
         return self._bass_level
 
     def set_mode(self, mode: str) -> None:
+        """Switch the active mode (unknown names are ignored)."""
         if mode in MODE_PRESETS:
             self._mode = mode
 
     def set_brightness(self, brightness: float) -> None:
+        """Set the overall brightness scale (0.0-1.0, clamped)."""
         self._brightness = clamp(float(brightness))
 
     def set_brightness_floor(self, brightness_floor: float) -> None:
+        """Set the absolute resting-brightness floor (0.0-1.0)."""
         self._brightness_floor = clamp(float(brightness_floor))
 
     def _effective_channel_floor(self) -> float:
-        """Channel multiplier floor, honoring the user's lower bound.
+        """
+        Channel multiplier floor, honoring the user's lower bound.
 
         When a brightness floor is configured it replaces the mode's
         built-in floor: the floor is an absolute output level, so as a
@@ -300,10 +338,9 @@ class LifxAudioAnalyzer:
         return preset.channel_floor
 
     def set_palette(self, palette: Sequence[RGB]) -> None:
+        """Replace the color palette (empty input keeps the current one)."""
         if palette:
-            self._palette = [
-                (r / 255.0, g / 255.0, b / 255.0) for r, g, b in palette
-            ]
+            self._palette = [(r / 255.0, g / 255.0, b / 255.0) for r, g, b in palette]
 
     @property
     def _preset(self) -> ModePreset:
@@ -312,7 +349,8 @@ class LifxAudioAnalyzer:
     # -- inputs ------------------------------------------------------------
 
     def queue_spectrum(self, timestamp_us: int, bins: Sequence[float]) -> None:
-        """Queue one spectrum frame, normalized and shaped.
+        """
+        Queue one spectrum frame, normalized and shaped.
 
         The Sendspin server encodes bins as uint16 dB-scaled values in
         [0, 65535] (-60 dB -> 0, 0 dB -> 65535). Smaller-range encodings
@@ -348,9 +386,7 @@ class LifxAudioAnalyzer:
         normalized = clamp(int(peak) / 255.0)
         if normalized < _PEAK_MIN_STRENGTH:
             return
-        self._pending_peaks.append(
-            (int(timestamp_us), normalized * _PEAK_BOOST_SCALE)
-        )
+        self._pending_peaks.append((int(timestamp_us), normalized * _PEAK_BOOST_SCALE))
 
     def queue_beat(self, timestamp_us: int, is_downbeat: bool = False) -> None:
         """Queue a beat; positions use a continuous (never-reset) count."""
@@ -392,23 +428,15 @@ class LifxAudioAnalyzer:
                 energy = deep
                 if len(bins) > 1:
                     gate = min(1.0, deep / _BASS_BIN1_GATE_FULL)
-                    energy += (
-                        _BASS_BIN1_WEIGHT * gate * bins[1] ** _BASS_CONTRAST_EXP
-                    )
+                    energy += _BASS_BIN1_WEIGHT * gate * bins[1] ** _BASS_CONTRAST_EXP
                 energy = min(1.5, energy) * _BASS_LEVEL_GAIN
-                alpha = (
-                    _BASS_LEVEL_RISE
-                    if energy > self._bass_level
-                    else _BASS_LEVEL_DECAY
-                )
+                alpha = _BASS_LEVEL_RISE if energy > self._bass_level else _BASS_LEVEL_DECAY
                 self._bass_level += (energy - self._bass_level) * alpha
             bass_count = min(_BASS_SAT_BINS, len(bins))
             if not bass_count:
                 continue
             bass_energy = sum(bins[:bass_count]) / bass_count
-            self._bass_baseline += (
-                bass_energy - self._bass_baseline
-            ) * _BASS_BASELINE_SMOOTHING
+            self._bass_baseline += (bass_energy - self._bass_baseline) * _BASS_BASELINE_SMOOTHING
             bass_transient = max(0.0, bass_energy - self._bass_baseline)
             swing_raw = min(1.0, bass_transient * _BASS_TRANSIENT_SCALE)
             # The brightness pump follows the low-band transient (deep
@@ -425,8 +453,7 @@ class LifxAudioAnalyzer:
                 ) * _BASS_BASELINE_SMOOTHING
                 pump_raw = min(
                     1.0,
-                    max(0.0, pump_energy - self._pump_baseline)
-                    * _BASS_TRANSIENT_SCALE,
+                    max(0.0, pump_energy - self._pump_baseline) * _BASS_TRANSIENT_SCALE,
                 )
             else:
                 pump_raw = swing_raw
@@ -461,12 +488,9 @@ class LifxAudioAnalyzer:
     def _ensure_filters(self) -> None:
         n = len(self._channels)
         if len(self._channel_filters) != n:
-            self._channel_filters = [
-                _ExpFilter(_CHANNEL_RISE, _CHANNEL_DECAY) for _ in range(n)
-            ]
+            self._channel_filters = [_ExpFilter(_CHANNEL_RISE, _CHANNEL_DECAY) for _ in range(n)]
             self._channel_baselines = [
-                _ExpFilter(_CHANNEL_BASELINE_RISE, _CHANNEL_BASELINE_DECAY)
-                for _ in range(n)
+                _ExpFilter(_CHANNEL_BASELINE_RISE, _CHANNEL_BASELINE_DECAY) for _ in range(n)
             ]
 
     def _transient_multiplier(self, index: int, energy: float) -> float:
@@ -497,17 +521,12 @@ class LifxAudioAnalyzer:
             # per-channel minimum does not apply here — it would
             # override this mode's deliberately low rest floor.
             drive = clamp(
-                (self._bass_level - _BASS_LEVEL_THRESHOLD)
-                / (1.0 - _BASS_LEVEL_THRESHOLD)
+                (self._bass_level - _BASS_LEVEL_THRESHOLD) / (1.0 - _BASS_LEVEL_THRESHOLD)
             )
             floor = self._effective_channel_floor()
-            return [
-                floor + (self._preset.channel_max - floor) * drive
-            ] * n
+            return [floor + (self._preset.channel_max - floor) * drive] * n
         bin_cap = self._preset.band_bin_max
-        usable = min(
-            _CHANNEL_BIN_MAX if bin_cap is None else bin_cap, len(bins) - 1
-        ) + 1
+        usable = min(_CHANNEL_BIN_MAX if bin_cap is None else bin_cap, len(bins) - 1) + 1
         # The hard minimum multiplier must not override a configured
         # brightness floor, or the floor setting would silently do
         # nothing for low values.
@@ -523,9 +542,7 @@ class LifxAudioAnalyzer:
             hi = max(lo + 1, ((i + 1) * usable) // n)
             band = bins[lo:hi]
             energy = sum(band) / len(band) if band else 0.0
-            multipliers.append(
-                max(min_mult, self._transient_multiplier(i, energy))
-            )
+            multipliers.append(max(min_mult, self._transient_multiplier(i, energy)))
         return multipliers
 
     # -- beats / palette walking ---------------------------------------------
@@ -572,17 +589,13 @@ class LifxAudioAnalyzer:
             dist = abs(now_us - beat.timestamp_us)
             if dist >= half_width:
                 continue
-            peak = (
-                preset.downbeat_pulse_peak if beat.is_downbeat else preset.pulse_peak
-            )
+            peak = preset.downbeat_pulse_peak if beat.is_downbeat else preset.pulse_peak
             effect = (peak - 1.0) * (1.0 - dist / half_width)
             if abs(effect) > abs(max_effect):
                 max_effect = effect
         return 1.0 + max_effect
 
-    def _palette_color_at(
-        self, position: float, sat_factor: float
-    ) -> tuple[float, float, float]:
+    def _palette_color_at(self, position: float, sat_factor: float) -> tuple[float, float, float]:
         palette = self._palette
         palette_len = len(palette)
         position %= palette_len
@@ -627,9 +640,7 @@ class LifxAudioAnalyzer:
             for channel in self._channels
         ]
 
-    def _peak_walk_colors(
-        self, now_us: int
-    ) -> list[tuple[float, float, float]]:
+    def _peak_walk_colors(self, now_us: int) -> list[tuple[float, float, float]]:
         preset = self._preset
         if len(self._palette) == 1:
             return [self._palette[0] for _ in self._channels]
@@ -697,9 +708,7 @@ def _lerp(
     )
 
 
-def _scale_saturation(
-    rgb: tuple[float, float, float], factor: float
-) -> tuple[float, float, float]:
+def _scale_saturation(rgb: tuple[float, float, float], factor: float) -> tuple[float, float, float]:
     """Scale HSV saturation by ``factor`` (hue and value preserved)."""
     r, g, b = rgb
     peak = max(r, g, b)
@@ -721,8 +730,8 @@ def _scale_saturation(
 
 __all__ = [
     "MODE_PRESETS",
+    "LifxAudioAnalyzer",
     "LightChannel",
     "LightColorCommand",
-    "LifxAudioAnalyzer",
     "ModePreset",
 ]

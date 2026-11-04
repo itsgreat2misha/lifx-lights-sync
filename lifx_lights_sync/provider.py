@@ -30,10 +30,9 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from music_assistant.models.plugin import PluginProvider
 from music_assistant_models.config_entries import ConfigEntry, ConfigValueOption
 from music_assistant_models.enums import ConfigEntryType
-
-from music_assistant.models.plugin import PluginProvider
 
 from . import constants as const
 from .bridge import LifxBridgeManager
@@ -51,20 +50,25 @@ from .lifx_output import open_devices
 from .settings import PluginSettings
 
 if TYPE_CHECKING:
+    from music_assistant.mass import MusicAssistant
     from music_assistant_models.config_entries import ProviderConfig
     from music_assistant_models.enums import ProviderFeature
     from music_assistant_models.provider import ProviderManifest
 
-    from music_assistant.mass import MusicAssistant
-
 _LOGGER = logging.getLogger(__name__)
 
 # Config keys that can be applied to running bridges without a reload.
+# brightness_floor reaches the analyzer via bridge.update_settings;
+# debug_frame_log is read from the provider's settings object on every
+# render tick, so refreshing self._settings (done in update_config
+# before the bridges are updated) is enough for both.
 _LIVE_SETTING_KEYS = (
     const.CONF_BRIGHTNESS,
+    const.CONF_BRIGHTNESS_FLOOR,
     const.CONF_COLOR_MODE,
     const.CONF_LATENCY_MS,
     const.CONF_SEND_RATE_HZ,
+    const.CONF_DEBUG_FRAME_LOG,
 )
 
 
@@ -106,7 +110,9 @@ class LifxLightsSyncProvider(PluginProvider):
                 default_value=const.DEFAULT_DISCOVERY_SOURCE,
                 options=[
                     ConfigValueOption(const.SOURCE_AUTO, "Auto"),
-                    ConfigValueOption(const.SOURCE_HASS, "Music Assistant's Home Assistant provider"),
+                    ConfigValueOption(
+                        const.SOURCE_HASS, "Music Assistant's Home Assistant provider"
+                    ),
                     ConfigValueOption(const.SOURCE_HA, "Home Assistant (direct URL + token)"),
                     ConfigValueOption(const.SOURCE_LAN, "LAN only"),
                 ],
@@ -139,6 +145,7 @@ class LifxLightsSyncProvider(PluginProvider):
                 default_value=const.DEFAULT_BRIGHTNESS_FLOOR,
                 range=(const.MIN_BRIGHTNESS_FLOOR, const.MAX_BRIGHTNESS_FLOOR),
                 required=False,
+                immediate_apply=True,
                 category="settings",
             ),
             ConfigEntry(
@@ -146,8 +153,7 @@ class LifxLightsSyncProvider(PluginProvider):
                 type=ConfigEntryType.STRING,
                 default_value=const.DEFAULT_COLOR_MODE,
                 options=[
-                    ConfigValueOption(mode, title=mode.capitalize())
-                    for mode in const.COLOR_MODES
+                    ConfigValueOption(mode, title=mode.capitalize()) for mode in const.COLOR_MODES
                 ],
                 category="settings",
             ),
@@ -189,18 +195,14 @@ class LifxLightsSyncProvider(PluginProvider):
             # when this plugin set up (provider load order is not
             # guaranteed); retry once it appears instead of staying
             # LAN-only until the next restart.
-            self._rediscovery_task = self.mass.create_task(
-                self._delayed_rediscovery()
-            )
+            self._rediscovery_task = self.mass.create_task(self._delayed_rediscovery())
 
     async def _delayed_rediscovery(self) -> None:
         """Re-run discovery once MA's hass provider is available."""
         await asyncio.sleep(45)
         self._rediscovery_task = None
         if self.mass.get_provider("hass") is None:
-            self.logger.debug(
-                "hass provider still unavailable; keeping current discovery"
-            )
+            self.logger.debug("hass provider still unavailable; keeping current discovery")
             return
         self.logger.info(
             "hass provider is now available; re-running discovery to "
@@ -212,12 +214,12 @@ class LifxLightsSyncProvider(PluginProvider):
         for device in self._devices.values():
             try:
                 await device.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 self.logger.debug("Error closing LIFX device", exc_info=True)
         self._devices = {}
         await self._discover_and_setup()
 
-    async def _discover_and_setup(self) -> bool:
+    async def _discover_and_setup(self) -> bool:  # noqa: PLR0915 - one linear orchestration flow
         """Run discovery and bridge setup; True if HA-sourced."""
         settings = self._settings
         source = settings.discovery_source
@@ -240,21 +242,18 @@ class LifxLightsSyncProvider(PluginProvider):
             and settings.ha_configured
         ):
             try:
-                ha_lights = await fetch_ha_lifx_lights(
-                    settings.ha_url, settings.ha_token
-                )
+                ha_lights = await fetch_ha_lifx_lights(settings.ha_url, settings.ha_token)
                 ha_source_used = "direct Home Assistant connection"
                 self.logger.info(
                     "Home Assistant reported %d LIFX lights (direct connection)",
                     len(ha_lights),
                 )
-            except Exception as err:  # noqa: BLE001
+            except Exception as err:
                 if source == const.SOURCE_HA:
                     self.logger.error("Home Assistant discovery failed: %s", err)
                 else:
                     self.logger.warning(
-                        "Home Assistant discovery failed (%s); "
-                        "falling back to LAN discovery",
+                        "Home Assistant discovery failed (%s); falling back to LAN discovery",
                         err,
                     )
         elif source in (const.SOURCE_AUTO, const.SOURCE_HA) and not ha_lights:
@@ -269,7 +268,7 @@ class LifxLightsSyncProvider(PluginProvider):
         if source not in (const.SOURCE_HA, const.SOURCE_HASS) or ha_lights:
             try:
                 lan_devices = await discover_lan()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 self.logger.warning("LAN discovery failed", exc_info=True)
             self.logger.info("LAN discovery found %d devices", len(lan_devices))
 
@@ -296,22 +295,14 @@ class LifxLightsSyncProvider(PluginProvider):
         # lights are already known to live for every serial still
         # missing an IP (raw GetService; see discovery.sweep_for_serials).
         missing_serials = {
-            light.serial
-            for target in targets
-            for light in target.lights
-            if not light.ip
+            light.serial for target in targets for light in target.lights if not light.ip
         }
         if missing_serials:
             seed_ips = [device.ip for device in lan_devices if device.ip]
-            seed_ips += [
-                light.ip
-                for target in targets
-                for light in target.lights
-                if light.ip
-            ]
+            seed_ips += [light.ip for target in targets for light in target.lights if light.ip]
             try:
                 found = await sweep_for_serials(missing_serials, seed_ips)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 self.logger.warning("LIFX unicast sweep failed", exc_info=True)
                 found = {}
             filled = apply_sweep_results(targets, found)
@@ -326,7 +317,7 @@ class LifxLightsSyncProvider(PluginProvider):
         all_lights = [light for target in targets for light in target.lights]
         try:
             self._devices = await open_devices(all_lights)
-        except Exception:  # noqa: BLE001
+        except Exception:
             self.logger.warning("Could not open LIFX devices", exc_info=True)
             self._devices = {}
 
@@ -342,7 +333,7 @@ class LifxLightsSyncProvider(PluginProvider):
         hass_provider: Any = None
         try:
             hass_provider = self.mass.get_provider("hass")
-        except Exception:  # noqa: BLE001 - provider lookup must not crash load
+        except Exception:
             hass_provider = None
         if hass_provider is None:
             msg = "Music Assistant's Home Assistant provider is not loaded"
@@ -380,7 +371,7 @@ class LifxLightsSyncProvider(PluginProvider):
         for device in self._devices.values():
             try:
                 await device.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 self.logger.debug("Error closing LIFX device", exc_info=True)
         self._devices = {}
 
@@ -388,10 +379,11 @@ class LifxLightsSyncProvider(PluginProvider):
         """
         Handle config changes.
 
-        Playback settings (brightness, color mode, latency, send rate)
-        are applied to the running bridges in place; anything else
-        (discovery source, HA connection, log level) goes through the
-        base implementation, which reloads the provider.
+        Playback settings (brightness, brightness floor, color mode,
+        latency, send rate, debug frame log) are applied to the
+        running bridges in place; anything else (discovery source, HA
+        connection, log level) goes through the base implementation,
+        which reloads the provider.
         """
         # changed_keys arrive namespaced as 'values/<key>'; only skip
         # the reload when every changed key can be applied in place.

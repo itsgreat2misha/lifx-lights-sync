@@ -1,0 +1,157 @@
+# Tooling configuration, mirroring the Music Assistant server repo's
+# ruff/mypy setup (pyproject.toml there, fetched 2026-11-03) so this
+# provider stays close to upstream style: line length 100, ruff
+# select = ALL with upstream's ignore list, pep257 docstrings with
+# D213, and strict mypy with missing imports ignored (Music Assistant
+# and lifx-async are only present inside a running MA instance).
+# Deviations from upstream are marked inline.
+
+[tool.ruff]
+line-length = 100
+# Upstream targets py314; this repo's test environment is 3.12 and the
+# code intentionally stays 3.12-compatible.
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["ALL"]
+extend-select = ["D213"]
+ignore = [
+  "ANN002", # Just annoying, not really useful
+  "ANN003", # Just annoying, not really useful
+  "ANN401", # Opinionated warning on disallowing dynamically typed expressions
+  "D203", # Conflicts with other rules
+  "D417", # False positives in some occasions
+  "EM101", # Just annoying, not really useful
+  "EM102", # Just annoying, not really useful
+  "FIX002", # Just annoying, not really useful
+  "PLR2004", # Just annoying, not really useful
+  "PGH004", # Just annoying, not really useful
+  "PD011", # Just annoying, not really useful
+  "S101", # assert is often used to satisfy type checking
+  "TC001", # Just annoying, not really useful
+  "TC003", # Just annoying, not really useful
+  "TD002", # Just annoying, not really useful
+  "TD003", # Just annoying, not really useful
+  "TD004", # Just annoying, not really useful
+  "TRY003", # Just annoying, not really useful
+  "TRY400", # Just annoying, not really useful
+  "COM812", # Conflicts with the Ruff formatter
+  "ASYNC109", # Not relevant, since we use helpers with configurable timeouts
+  "ASYNC110", # Use `asyncio.Event` instead of awaiting `asyncio.sleep` in a `while` loop
+  "N818", # Just annoying, not really useful
+  "E501", # Handled by ruff formatter
+  "ASYNC240", # Not relevant, we use asyncio not trio/anyio
+  "UP047", # Not yet ready to migrate to type parameters
+  "PLW0108", # Just annoying, not really useful
+  "CPY001", # Just annoying, not really useful
+  "LOG004", # Just annoying, not really useful
+  "FURB110", # Just annoying, not really useful
+  # TEMPORARY DISABLED rules (same set as upstream)
+  "BLE001",
+  "FBT001",
+  "FBT002",
+  "FBT003",
+  "ANN001",
+  "ANN202",
+  "PTH118",
+  "PTH120",
+  "PTH123",
+  "G004",
+  "S106",
+  "SLF001",
+  "SIM102",
+  "PERF401",
+  "ARG002",
+  "B904",
+  "S324",
+  "S304",
+  "TRY300",
+  "S608",
+  "ANN204",
+  "ISC004", # To implement later
+  "PLR0917", # To implement later
+]
+
+[tool.ruff.lint.per-file-ignores]
+# tests use wildcard addresses, made-up tokens and passwords as fixtures
+"tests/**" = [
+  "S104",
+  "S105",
+  # the suite is stdlib unittest by design (dependency-free), so the
+  # pytest-style and test-docstring rules do not apply
+  "PT009",
+  "PT027",
+  "D101",
+  "D102",
+  "D103",
+  "D107",
+  "ANN201",
+  "INP001",
+  "PLC0415",
+]
+
+[tool.ruff.lint.pydocstyle]
+# Use Sphinx-style docstrings with :param: syntax
+# pep257 is the base convention, we enforce Sphinx-style parameters separately
+convention = "pep257"
+
+[tool.ruff.lint.pylint]
+max-args = 10
+max-branches = 25
+max-returns = 15
+max-statements = 50
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25
+
+[tool.ruff.lint.isort]
+known-first-party = ["lifx_lights_sync"]
+
+[tool.ruff.format]
+# Force Linux/macOS line endings
+line-ending = "lf"
+
+[tool.mypy]
+platform = "linux"
+python_version = "3.12"
+files = "lifx_lights_sync"
+follow_imports = "normal"
+# suppress errors about unsatisfied imports (MA / lifx-async / aiosendspin
+# are not installed outside a running Music Assistant)
+ignore_missing_imports = true
+# be strict
+check_untyped_defs = true
+disable_error_code = [
+  "annotation-unchecked",
+  "import-not-found",
+  "import-untyped",
+]
+disallow_any_generics = true
+disallow_incomplete_defs = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+disallow_untyped_defs = true
+enable_error_code = [
+  "ignore-without-code",
+  "possibly-undefined",
+  "redundant-self",
+  "truthy-iterable",
+]
+extra_checks = true
+local_partial_types = true
+no_implicit_optional = true
+no_implicit_reexport = true
+show_error_codes = true
+strict_equality = true
+strict_optional = true
+warn_incomplete_stub = true
+warn_no_return = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_configs = true
+warn_unused_ignores = true
+# Upstream also sets disallow_subclassing_any; it is not set here
+# because bridge.py / provider.py subclass Music Assistant classes
+# that only exist inside a running MA instance and resolve to Any
+# when their imports are missing.

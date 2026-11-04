@@ -10,7 +10,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lifx_lights_sync.discovery import (
-    LanDevice,
     ResolvedLight,
     SyncTarget,
     apply_sweep_results,
@@ -48,15 +47,15 @@ class TestPacket(unittest.TestCase):
         self.assertEqual(msg_type, 2)
 
     def test_parse_state_service(self) -> None:
-        packet = _state_service_packet("d073d584d445")
-        self.assertEqual(parse_state_service(packet), "d073d584d445")
+        packet = _state_service_packet("d073d500000b")
+        self.assertEqual(parse_state_service(packet), "d073d500000b")
 
     def test_parse_rejects_other_types(self) -> None:
-        packet = _state_service_packet("d073d584d445", msg_type=2)
+        packet = _state_service_packet("d073d500000b", msg_type=2)
         self.assertIsNone(parse_state_service(packet))
 
     def test_parse_rejects_non_udp_service(self) -> None:
-        packet = _state_service_packet("d073d584d445", service=2)
+        packet = _state_service_packet("d073d500000b", service=2)
         self.assertIsNone(parse_state_service(packet))
 
     def test_parse_rejects_short(self) -> None:
@@ -66,8 +65,8 @@ class TestPacket(unittest.TestCase):
 class TestHelpers(unittest.TestCase):
     def test_subnets_from_ips(self) -> None:
         self.assertEqual(
-            subnets_from_ips(["192.168.3.5", "192.168.3.9", "10.0.0.2", "junk", ""]),
-            ["192.168.3", "10.0.0"],
+            subnets_from_ips(["192.0.2.5", "192.0.2.9", "10.0.0.2", "junk", ""]),
+            ["192.0.2", "10.0.0"],
         )
 
     def test_apply_sweep_results(self) -> None:
@@ -77,19 +76,17 @@ class TestHelpers(unittest.TestCase):
             kind="area",
             lights=[
                 ResolvedLight(serial="aaaaaaaaaaaa", name="A", area_name="X"),
-                ResolvedLight(
-                    serial="bbbbbbbbbbbb", name="B", area_name="X", ip="192.168.3.9"
-                ),
+                ResolvedLight(serial="bbbbbbbbbbbb", name="B", area_name="X", ip="192.0.2.9"),
                 ResolvedLight(serial="cccccccccccc", name="C", area_name="X"),
             ],
         )
         filled = apply_sweep_results(
-            [target], {"aaaaaaaaaaaa": "192.168.3.44", "bbbbbbbbbbbb": "1.1.1.1"}
+            [target], {"aaaaaaaaaaaa": "192.0.2.44", "bbbbbbbbbbbb": "198.51.100.1"}
         )
         self.assertEqual(filled, 1)
-        self.assertEqual(target.lights[0].ip, "192.168.3.44")
+        self.assertEqual(target.lights[0].ip, "192.0.2.44")
         # Existing IPs are never overwritten by a sweep result.
-        self.assertEqual(target.lights[1].ip, "192.168.3.9")
+        self.assertEqual(target.lights[1].ip, "192.0.2.9")
         self.assertIsNone(target.lights[2].ip)
 
 

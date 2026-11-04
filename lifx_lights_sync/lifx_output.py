@@ -1,4 +1,5 @@
-"""LIFX output: render commands -> lifx-async device calls.
+"""
+LIFX output: render commands -> lifx-async device calls.
 
 One :class:`LifxSender` owns the output side of one sync target:
 
@@ -35,13 +36,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from . import constants as const
 from .analyzer import LightColorCommand
 from .color import RGB, rgb_to_hsbk
-from .discovery import LanDevice, SyncTarget, normalize_serial
+from .discovery import SyncTarget, normalize_serial
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,7 +101,8 @@ def device_class_name(is_matrix: bool, is_ceiling: bool) -> str:
 
 
 async def _create_typed_device(ip: str, serial: str, class_name: str) -> Any:
-    """Create a device via the concrete class's ``from_ip`` factory.
+    """
+    Create a device via the concrete class's ``from_ip`` factory.
 
     ``Device.from_ip`` returns a BASE Device with no color methods at
     all (proven live: get_color/set_color AttributeErrors, silently
@@ -117,7 +120,7 @@ async def _create_typed_device(ip: str, serial: str, class_name: str) -> Any:
             from lifx.devices.matrix import MatrixLight  # noqa: PLC0415
 
             device_cls = MatrixLight
-    except Exception:  # noqa: BLE001
+    except Exception:
         device_cls = None
     if device_cls is None:
         from lifx.devices.light import Light  # noqa: PLC0415
@@ -129,7 +132,8 @@ async def _create_typed_device(ip: str, serial: str, class_name: str) -> Any:
 async def open_devices(
     sources: Mapping[str, str] | Iterable[Any],
 ) -> dict[str, Any]:
-    """Create connected lifx-async device objects for known serial/IPs.
+    """
+    Create connected lifx-async device objects for known serial/IPs.
 
     ``sources`` is either a serial -> IP mapping (devices are created
     as plain Lights) or an iterable of objects carrying ``serial``,
@@ -166,7 +170,7 @@ async def open_devices(
             # Devices work without an explicit enter, but entering loads
             # state/geometry (and the ceiling tile chain) up front.
             await device.__aenter__()
-        except Exception:  # noqa: BLE001
+        except Exception:
             _LOGGER.debug("Device %s entered without context", serial, exc_info=True)
         opened[serial] = device
 
@@ -174,7 +178,7 @@ async def open_devices(
         class_name = device_class_name(is_matrix, is_ceiling)
         try:
             device = await _create_typed_device(ip, serial, class_name)
-        except Exception:  # noqa: BLE001
+        except Exception:
             _LOGGER.debug(
                 "Direct from_ip (%s) failed for %s (%s); will try sweep",
                 class_name,
@@ -191,29 +195,23 @@ async def open_devices(
         try:
             from lifx.network.discovery import discover_devices  # noqa: PLC0415
 
-            async for discovered in discover_devices(
-                timeout=const.LAN_DISCOVERY_TIMEOUT_S
-            ):
+            async for discovered in discover_devices(timeout=const.LAN_DISCOVERY_TIMEOUT_S):
                 serial = normalize_serial(getattr(discovered, "serial", ""))
                 if serial not in missing or serial in opened:
                     continue
                 try:
                     device = await discovered.create_device()
-                except Exception:  # noqa: BLE001
-                    _LOGGER.warning(
-                        "Could not create LIFX device %s", serial, exc_info=True
-                    )
+                except Exception:
+                    _LOGGER.warning("Could not create LIFX device %s", serial, exc_info=True)
                     continue
                 if device is not None:
                     await _adopt(serial, device)
-        except Exception:  # noqa: BLE001
+        except Exception:
             _LOGGER.warning("LIFX sweep fallback failed", exc_info=True)
 
     still_missing = sorted(set(wanted) - set(opened))
     if still_missing:
-        _LOGGER.warning(
-            "LIFX devices not reachable for output: %s", ", ".join(still_missing)
-        )
+        _LOGGER.warning("LIFX devices not reachable for output: %s", ", ".join(still_missing))
     return opened
 
 
@@ -226,6 +224,7 @@ class LifxSender:
         devices: Mapping[str, Any],
         send_rate_hz: int = const.DEFAULT_SEND_RATE_HZ,
     ) -> None:
+        """Initialize the sender for one target and its opened devices."""
         self._target = target
         self._devices: dict[str, Any] = {
             normalize_serial(serial): device for serial, device in devices.items()
@@ -242,6 +241,7 @@ class LifxSender:
     # -- configuration -----------------------------------------------------
 
     def set_send_rate(self, send_rate_hz: int) -> None:
+        """Update the per-light send rate cap (sends/second)."""
         self._send_rate_hz = max(1, send_rate_hz)
         self._min_interval = 1.0 / self._send_rate_hz
 
@@ -257,6 +257,7 @@ class LifxSender:
 
     @property
     def target(self) -> SyncTarget:
+        """The sync target this sender writes to."""
         return self._target
 
     # -- helpers -------------------------------------------------------------
@@ -284,7 +285,8 @@ class LifxSender:
         return False
 
     async def _send_bulb_packet(self, device: Any, rgb: RGB) -> None:
-        """Send one bulb color as a raw SetColor packet (LedFx-style).
+        """
+        Send one bulb color as a raw SetColor packet (LedFx-style).
 
         Fire-and-forget: no acknowledgement is awaited, so the send
         cadence stays metronome-steady, and the bulb's own hardware
@@ -293,9 +295,7 @@ class LifxSender:
         from lifx.protocol import packets  # noqa: PLC0415
 
         color = self._to_hsbk(rgb).to_protocol()
-        packet = packets.Light.SetColor(
-            color=color, duration=self._bulb_duration_ms
-        )
+        packet = packets.Light.SetColor(color=color, duration=self._bulb_duration_ms)
         await device.connection.send_packet(packet)
 
     async def _get_animator(self, serial: str, device: Any) -> Any | None:
@@ -313,7 +313,7 @@ class LifxSender:
         for animator in self._animators.values():
             try:
                 animator.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.debug("Animator close failed", exc_info=True)
         self._animators.clear()
 
@@ -322,7 +322,7 @@ class LifxSender:
             return
         try:
             await device.set_power(True)
-        except Exception:  # noqa: BLE001
+        except Exception:
             _LOGGER.warning("set_power failed for %s", serial, exc_info=True)
         self._powered_on.add(serial)
 
@@ -341,7 +341,7 @@ class LifxSender:
                     color, power, _label = await device.get_color()
                     snapshot.color = _hsbk_components(color)
                     snapshot.power = int(power)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     _LOGGER.warning("Snapshot color failed for %s", light.serial, exc_info=True)
                 if light.is_matrix:
                     try:
@@ -349,15 +349,11 @@ class LifxSender:
                         if tiles:
                             snapshot.zone_colors = [
                                 components
-                                for components in (
-                                    _hsbk_components(zone) for zone in tiles[0]
-                                )
+                                for components in (_hsbk_components(zone) for zone in tiles[0])
                                 if components is not None
                             ]
-                    except Exception:  # noqa: BLE001
-                        _LOGGER.debug(
-                            "Snapshot zones failed for %s", light.serial, exc_info=True
-                        )
+                    except Exception:
+                        _LOGGER.debug("Snapshot zones failed for %s", light.serial, exc_info=True)
                 self._snapshots[light.serial] = snapshot
 
     async def restore(self) -> None:
@@ -380,23 +376,18 @@ class LifxSender:
                     await device.set_color(self._hsbk_from_components(snapshot.color))
                 if snapshot.power is not None:
                     await device.set_power(bool(snapshot.power))
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.debug("Restore failed for %s", serial, exc_info=True)
 
     def _hsbk_from_components(self, components: tuple[float, float, float, int]) -> Any:
         from lifx.color import HSBK  # noqa: PLC0415
 
         hue, saturation, brightness, kelvin = components
-        return HSBK(
-            hue=hue, saturation=saturation, brightness=brightness, kelvin=kelvin
-        )
+        return HSBK(hue=hue, saturation=saturation, brightness=brightness, kelvin=kelvin)
 
-    async def _restore_zones(
-        self, serial: str, device: Any, snapshot: DeviceSnapshot
-    ) -> None:
+    async def _restore_zones(self, serial: str, device: Any, snapshot: DeviceSnapshot) -> None:
         colors = [
-            self._hsbk_from_components(components)
-            for components in snapshot.zone_colors or []
+            self._hsbk_from_components(components) for components in snapshot.zone_colors or []
         ]
         if not colors:
             return
@@ -407,15 +398,13 @@ class LifxSender:
                 # The final saved zone is the uplight: put it back too.
                 try:
                     await device.set_uplight_color(colors[downlight_count])
-                except Exception:  # noqa: BLE001
+                except Exception:
                     _LOGGER.debug("Uplight restore failed for %s", serial, exc_info=True)
         else:
             await device.set_matrix_colors(0, colors, duration=0)
 
     def _downlight_count(self, serial: str, colors: Sequence[Any]) -> int:
-        light = next(
-            (item for item in self._target.lights if item.serial == serial), None
-        )
+        light = next((item for item in self._target.lights if item.serial == serial), None)
         if light is not None:
             return light.downlight_zone_count
         return max(0, len(colors) - 1)
@@ -444,7 +433,7 @@ class LifxSender:
                 await self._ensure_power(serial, device)
             try:
                 await self._send_bulb_packet(device, rgb)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.warning("Bulb packet send failed for %s", serial, exc_info=True)
 
         for serial, zone_map in zones.items():
@@ -458,7 +447,7 @@ class LifxSender:
                 await self._ensure_power(serial, device)
             try:
                 await self._send_matrix_frame(serial, device, frame, target)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.warning("Matrix send failed for %s", serial, exc_info=True)
 
     async def _send_matrix_frame(
@@ -468,9 +457,7 @@ class LifxSender:
         frame: dict[int, RGB],
         target: SyncTarget,
     ) -> None:
-        light = next(
-            (item for item in target.lights if item.serial == serial), None
-        )
+        light = next((item for item in target.lights if item.serial == serial), None)
         width = (light.width if light else None) or target.width or 1
         height = (light.height if light else None) or target.height or 1
         total_zones = width * height
@@ -479,9 +466,7 @@ class LifxSender:
         # Compose the full frame; on a ceiling fixture the last zone is
         # the uplight, which keeps its snapshot color (the analyzer only
         # drives the downlight zones).
-        colors = [
-            self._to_hsbk(frame.get(index, (0, 0, 0))) for index in range(total_zones)
-        ]
+        colors = [self._to_hsbk(frame.get(index, (0, 0, 0))) for index in range(total_zones)]
         if is_ceiling and colors:
             snapshot = self._snapshots.get(serial)
             if snapshot and snapshot.zone_colors and len(snapshot.zone_colors) == total_zones:
@@ -496,14 +481,10 @@ class LifxSender:
             try:
                 animator = await self._get_animator(serial, device)
                 if animator is not None:
-                    animator.send_frame(
-                        [_protocol_tuple(color) for color in colors]
-                    )
+                    animator.send_frame([_protocol_tuple(color) for color in colors])
                     return
-            except Exception:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Animator send failed for %s; falling back", serial, exc_info=True
-                )
+            except Exception:
+                _LOGGER.warning("Animator send failed for %s; falling back", serial, exc_info=True)
                 self._animators.pop(serial, None)
 
         if is_ceiling and type(device).__name__ == "CeilingLight":
@@ -519,7 +500,7 @@ class LifxSender:
         for serial, device in self._devices.items():
             try:
                 await device.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.debug("Close failed for %s", serial, exc_info=True)
         self._devices.clear()
 

@@ -1,4 +1,5 @@
-"""Constants for the LIFX Lights Sync plugin.
+"""
+Constants for the LIFX Lights Sync plugin.
 
 This module is intentionally free of Music Assistant imports so it can be
 imported (and unit-tested) outside a running Music Assistant instance.
@@ -11,7 +12,7 @@ DOMAIN = "lifx_lights_sync"
 # --- Config entry keys (mirror the Hue Lights Sync plugin's naming style) ---
 CONF_DISCOVERY_SOURCE = "discovery_source"
 CONF_HA_URL = "ha_url"
-CONF_HA_TOKEN = "ha_token"
+CONF_HA_TOKEN = "ha_token"  # noqa: S105 - a config key name, not a credential
 CONF_BRIGHTNESS = "brightness"
 CONF_BRIGHTNESS_FLOOR = "brightness_floor"
 CONF_COLOR_MODE = "color_mode"
@@ -74,7 +75,7 @@ VISUALIZER_BRIDGE_ROLE_ID = "visualizer@_bridge"
 COLOR_BRIDGE_ROLE_ID = "color@_bridge"
 
 # --- Render loop ---
-RENDER_FPS = 30  # local render/send tick, independent of visualizer rate
+RENDER_FPS = 50  # local render/send tick, independent of visualizer rate
 STOP_DEBOUNCE_S = 2.0  # keep streaming briefly across track gaps
 
 # --- LIFX protocol ---
@@ -94,25 +95,24 @@ LAN_TARGET_ID = "lifx-lights"
 LAN_TARGET_NAME = "LIFX Lights"
 
 __all__ = [
-    "SWEEP_TIMEOUT_S",
     "COLOR_BRIDGE_ROLE_ID",
     "COLOR_MODES",
     "CONF_BRIGHTNESS",
     "CONF_COLOR_MODE",
+    "CONF_DEBUG_FRAME_LOG",
     "CONF_DISCOVERY_SOURCE",
     "CONF_HA_TOKEN",
     "CONF_HA_URL",
     "CONF_LATENCY_MS",
-    "CONF_DEBUG_FRAME_LOG",
     "CONF_SEND_RATE_HZ",
     "DEFAULT_BRIGHTNESS",
     "DEFAULT_COLOR_MODE",
+    "DEFAULT_DEBUG_FRAME_LOG",
     "DEFAULT_DISCOVERY_SOURCE",
     "DEFAULT_HA_TOKEN",
     "DEFAULT_HA_URL",
     "DEFAULT_KELVIN",
     "DEFAULT_LATENCY_MS",
-    "DEFAULT_DEBUG_FRAME_LOG",
     "DEFAULT_SEND_RATE_HZ",
     "DISCOVERY_SOURCES",
     "DOMAIN",
@@ -141,6 +141,7 @@ __all__ = [
     "SPECTRUM_N_DISP_BINS",
     "SPECTRUM_SCALE",
     "STOP_DEBOUNCE_S",
+    "SWEEP_TIMEOUT_S",
     "TARGET_KIND_ALL",
     "TARGET_KIND_AREA",
     "TARGET_KIND_MATRIX",

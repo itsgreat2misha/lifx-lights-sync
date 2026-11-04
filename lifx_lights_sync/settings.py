@@ -1,4 +1,5 @@
-"""Readers for the LIFX Lights Sync playback/discovery settings.
+"""
+Readers for the LIFX Lights Sync playback/discovery settings.
 
 Mirrors the installed Hue Lights Sync ``settings.py``: each reader takes
 the provider's ``ProviderConfig`` and normalizes the raw value returned
@@ -14,8 +15,9 @@ has no Music Assistant imports and is unit-testable in isolation.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any
 
 from . import constants as const
 
@@ -168,7 +170,7 @@ class PluginSettings:
         return bool(self.ha_url and self.ha_token)
 
     @classmethod
-    def from_mapping(cls, values: Mapping[str, Any] | None) -> "PluginSettings":
+    def from_mapping(cls, values: Mapping[str, Any] | None) -> PluginSettings:
         """Build settings from a raw config mapping (never raises)."""
         values = values or {}
         return cls(
@@ -215,8 +217,9 @@ class PluginSettings:
         )
 
     @classmethod
-    def from_config(cls, config: ProviderConfig) -> "PluginSettings":
-        """Build settings from a Music Assistant ``ProviderConfig``.
+    def from_config(cls, config: ProviderConfig) -> PluginSettings:
+        """
+        Build settings from a Music Assistant ``ProviderConfig``.
 
         Uses the Hue-style readers above (``config.get_value`` per key).
         """

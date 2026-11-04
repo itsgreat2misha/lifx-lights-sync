@@ -1,4 +1,5 @@
-"""Pure color helpers: RGB <-> HSBK conversion and palette building.
+"""
+Pure color helpers: RGB <-> HSBK conversion and palette building.
 
 Stdlib only, no Music Assistant / lifx-async imports, so this module is
 fully unit-testable. RGB values are ``(red, green, blue)`` tuples of ints
@@ -8,7 +9,8 @@ in the 0-255 range throughout this module.
 from __future__ import annotations
 
 import colorsys
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from .constants import DEFAULT_KELVIN
 
@@ -30,11 +32,13 @@ _PALETTE_FIELDS = ("primary", "accent", "on_dark", "on_light")
 
 
 def clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    """Clamp a value into the inclusive range [minimum, maximum]."""
     return max(minimum, min(maximum, value))
 
 
 def rgb_to_hsbk(rgb: RGB, brightness_scale: float = 1.0, kelvin: int = DEFAULT_KELVIN) -> HSBK:
-    """Convert an RGB tuple to (hue degrees, saturation, brightness, kelvin).
+    """
+    Convert an RGB tuple to (hue degrees, saturation, brightness, kelvin).
 
     ``brightness_scale`` multiplies the HSV value so callers can dim a
     color without changing its hue/saturation.
@@ -52,9 +56,7 @@ def rgb_to_hsbk(rgb: RGB, brightness_scale: float = 1.0, kelvin: int = DEFAULT_K
 def hsbk_to_rgb(hsbk: HSBK) -> RGB:
     """Convert (hue degrees, saturation, brightness, kelvin) back to RGB."""
     hue, saturation, brightness, _kelvin = hsbk
-    r, g, b = colorsys.hsv_to_rgb(
-        (hue % 360.0) / 360.0, clamp(saturation), clamp(brightness)
-    )
+    r, g, b = colorsys.hsv_to_rgb((hue % 360.0) / 360.0, clamp(saturation), clamp(brightness))
     return (round(r * 255), round(g * 255), round(b * 255))
 
 
@@ -66,11 +68,13 @@ def scale_rgb(rgb: RGB, factor: float) -> RGB:
 
 def rgb_distance(a: RGB, b: RGB) -> float:
     """Euclidean distance between two RGB colors."""
-    return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+    distance: float = sum((x - y) ** 2 for x, y in zip(a, b, strict=True)) ** 0.5
+    return distance
 
 
 def _coerce_rgb(value: Any) -> RGB | None:
-    """Best-effort conversion of a server color value to an RGB tuple.
+    """
+    Best-effort conversion of a server color value to an RGB tuple.
 
     Accepts dicts with red/green/blue or r/g/b keys, 3-sequences, and
     ``#rrggbb`` / ``rrggbb`` hex strings. Returns None when unparseable.
@@ -80,7 +84,7 @@ def _coerce_rgb(value: Any) -> RGB | None:
     if isinstance(value, Mapping):
         keys = ("red", "green", "blue") if "red" in value else ("r", "g", "b")
         try:
-            return tuple(int(round(float(value[key]))) for key in keys)  # type: ignore[return-value]
+            return tuple(round(float(value[key])) for key in keys)  # type: ignore[return-value]
         except (KeyError, TypeError, ValueError):
             return None
     if isinstance(value, str):
@@ -97,7 +101,7 @@ def _coerce_rgb(value: Any) -> RGB | None:
         return None
     if isinstance(value, Sequence) and len(value) == 3:
         try:
-            return tuple(int(round(float(channel))) for channel in value)  # type: ignore[return-value]
+            return tuple(round(float(channel)) for channel in value)  # type: ignore[return-value]
         except (TypeError, ValueError):
             return None
     return None
@@ -109,7 +113,8 @@ def _saturation(rgb: RGB) -> float:
 
 
 def _boost_saturation(rgb: RGB) -> RGB:
-    """Raise a color's saturation to at least MIN_SATURATION.
+    """
+    Raise a color's saturation to at least MIN_SATURATION.
 
     Near-white colors (saturation below MONOCHROME_SATURATION) are left
     alone: they carry no hue worth boosting.
@@ -133,7 +138,8 @@ def default_palette() -> list[RGB]:
 
 
 def build_palette(server_colors: Mapping[str, Any] | None) -> list[RGB]:
-    """Build an ordered working palette from a server color payload.
+    """
+    Build an ordered working palette from a server color payload.
 
     Rules (mirroring the Hue Lights Sync blueprint):
     - take primary, accent, on_dark, on_light, then any ``background_*``
@@ -149,9 +155,7 @@ def build_palette(server_colors: Mapping[str, Any] | None) -> list[RGB]:
         return default_palette()
 
     ordered_keys = [key for key in _PALETTE_FIELDS if key in server_colors]
-    ordered_keys += sorted(
-        key for key in server_colors if key.startswith("background_")
-    )
+    ordered_keys += sorted(key for key in server_colors if key.startswith("background_"))
 
     candidates: list[RGB] = []
     for key in ordered_keys:
@@ -175,9 +179,7 @@ def build_palette(server_colors: Mapping[str, Any] | None) -> list[RGB]:
         # analyzer something to alternate between on beats.
         return [WARM_WHITE, COOL_WHITE]
 
-    distinct_hues = {
-        round(colorsys.rgb_to_hsv(*(c / 255.0 for c in rgb))[0], 1) for rgb in unique
-    }
+    distinct_hues = {round(colorsys.rgb_to_hsv(*(c / 255.0 for c in rgb))[0], 1) for rgb in unique}
     if len(unique) < 2 or len(distinct_hues) < 2:
         return _shade_gradient(unique[0])
 
@@ -185,7 +187,8 @@ def build_palette(server_colors: Mapping[str, Any] | None) -> list[RGB]:
 
 
 def palette_color_at(palette: Sequence[RGB], index: int, fraction: float) -> RGB:
-    """Interpolate between palette[index] and the next palette color.
+    """
+    Interpolate between palette[index] and the next palette color.
 
     ``fraction`` (0.0-1.0) blends toward the following color, wrapping
     around the end of the palette. Used for spatial palette offsets.
@@ -195,9 +198,7 @@ def palette_color_at(palette: Sequence[RGB], index: int, fraction: float) -> RGB
     current = palette[index % len(palette)]
     following = palette[(index + 1) % len(palette)]
     fraction = clamp(fraction)
-    return tuple(
-        round(a + (b - a) * fraction) for a, b in zip(current, following)
-    )  # type: ignore[return-value]
+    return tuple(round(a + (b - a) * fraction) for a, b in zip(current, following, strict=True))  # type: ignore[return-value]
 
 
 __all__ = [

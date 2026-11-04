@@ -1,4 +1,5 @@
-"""Discovery: Home Assistant first, LAN as fallback and gap-filler.
+"""
+Discovery: Home Assistant first, LAN as fallback and gap-filler.
 
 Strategy (see README for the diagram):
 
@@ -37,8 +38,10 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from contextlib import suppress
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 from . import constants as const
 from .analyzer import LightChannel
@@ -49,7 +52,8 @@ _HEX_DIGITS = re.compile(r"[^0-9a-f]")
 
 
 class HaDiscoveryError(RuntimeError):
-    """Home Assistant discovery could not be performed.
+    """
+    Home Assistant discovery could not be performed.
 
     Raised by the HA fetchers when the source is absent, unavailable or
     errors out, so the provider can fall back to the next source (or to
@@ -109,6 +113,7 @@ class ResolvedLight:
 
     @property
     def zone_count(self) -> int:
+        """Total zone count (width x height, or 1 for non-matrix)."""
         if self.width and self.height:
             return self.width * self.height
         return 1
@@ -137,6 +142,7 @@ class SyncTarget:
 
     @property
     def serials(self) -> list[str]:
+        """Serials of all lights in this target."""
         return [light.serial for light in self.lights]
 
 
@@ -146,7 +152,8 @@ class SyncTarget:
 
 
 def normalize_serial(value: Any) -> str:
-    """Normalize a serial / MAC to 12 lowercase hex characters.
+    """
+    Normalize a serial / MAC to 12 lowercase hex characters.
 
     Accepts colon/dash/dot separated MACs, HA's separator-free serials
     and mixed-case input. Longer hex strings keep their last 12 digits
@@ -231,10 +238,9 @@ def _device_mac(device: Mapping[str, Any]) -> str | None:
     return None
 
 
-def parse_ha_registries(
-    devices: Any, entities: Any, areas: Any
-) -> list[HaLifxLight]:
-    """Extract LIFX lights from raw HA registry payloads.
+def parse_ha_registries(devices: Any, entities: Any, areas: Any) -> list[HaLifxLight]:
+    """
+    Extract LIFX lights from raw HA registry payloads.
 
     Devices are kept only when at least one ``light.*`` entity is bound
     to them (this filters out LIFX switches and other non-light gear).
@@ -260,9 +266,7 @@ def parse_ha_registries(
         device_id = str(device.get("id") or "")
         bound = entities_by_device.get(device_id, [])
         light_entities = [
-            entity
-            for entity in bound
-            if str(entity.get("entity_id") or "").startswith("light.")
+            entity for entity in bound if str(entity.get("entity_id") or "").startswith("light.")
         ]
         if not light_entities:
             continue
@@ -284,21 +288,18 @@ def parse_ha_registries(
                 serial=serial,
                 name=str(device.get("name_by_user") or device.get("name") or serial),
                 area_name=area_names.get(area_id) if area_id else None,
-                entity_ids=tuple(
-                    sorted(str(entity["entity_id"]) for entity in light_entities)
-                ),
+                entity_ids=tuple(sorted(str(entity["entity_id"]) for entity in light_entities)),
                 device_id=device_id,
                 mac=_device_mac(device),
             )
         )
-    lights.sort(
-        key=lambda light: (light.area_name is None, light.area_name or "", light.name)
-    )
+    lights.sort(key=lambda light: (light.area_name is None, light.area_name or "", light.name))
     return lights
 
 
 def parse_ha_config_entries(entries: Any) -> dict[str, str]:
-    """Map serial -> host from HA config entries (``config_entries/get``).
+    """
+    Map serial -> host from HA config entries (``config_entries/get``).
 
     Only entries with ``domain == "lifx"`` are considered. The serial
     comes from ``entry.data["serial"]`` (falling back to
@@ -323,7 +324,8 @@ def parse_ha_config_entries(entries: Any) -> dict[str, str]:
 def apply_ha_hosts(
     lights: Sequence[HaLifxLight], hosts_by_serial: Mapping[str, str]
 ) -> list[HaLifxLight]:
-    """Combine registry-derived lights with config-entry hosts.
+    """
+    Combine registry-derived lights with config-entry hosts.
 
     Pure combine step: returns new HaLifxLight objects with ``host``
     filled from ``hosts_by_serial`` where a host exists for the serial.
@@ -353,12 +355,7 @@ def _resolve(
     for ha_light in ha_lights:
         lan = lan_by_serial.get(ha_light.serial)
         seen.add(ha_light.serial)
-        if (
-            ha_light.host
-            and lan is not None
-            and lan.ip
-            and lan.ip != ha_light.host
-        ):
+        if ha_light.host and lan is not None and lan.ip and lan.ip != ha_light.host:
             # Cross-check only: HA's config-entry host is authoritative
             # (HA's own discovery maintains it), so keep it and merely
             # note that the LAN currently sees the light elsewhere.
@@ -444,7 +441,8 @@ def merge_targets(
     lan_devices: Sequence[LanDevice],
     include_lan_only: bool = True,
 ) -> list[SyncTarget]:
-    """Build sync targets from HA lights and LAN devices.
+    """
+    Build sync targets from HA lights and LAN devices.
 
     - one target per HA area containing LIFX lights (whole-light channels;
       matrix lights participate here as single channels too);
@@ -510,9 +508,7 @@ def merge_targets(
                 )
             )
 
-    for light in sorted(
-        (item for item in resolved if item.is_matrix), key=lambda item: item.name
-    ):
+    for light in sorted((item for item in resolved if item.is_matrix), key=lambda item: item.name):
         targets.append(_matrix_target(light))
 
     return targets
@@ -526,7 +522,8 @@ def merge_targets(
 async def fetch_ha_lifx_lights(
     ha_url: str, token: str, timeout_s: float = 10.0
 ) -> list[HaLifxLight]:
-    """Fetch and parse the HA registries over the WebSocket API.
+    """
+    Fetch and parse the HA registries over the WebSocket API.
 
     Raises RuntimeError with a human-readable message on any failure so
     the provider can log it and fall back to LAN discovery.
@@ -538,49 +535,55 @@ async def fetch_ha_lifx_lights(
         1: "config/device_registry/list",
         2: "config/entity_registry/list",
         3: "config/area_registry/list",
-        # LIFX config entries carry data.host + data.serial: the primary
-        # serial -> IP source (see module docstring).
+        # LIFX config entries store data.host + data.serial on disk,
+        # but the API strips data today, so this normally yields no
+        # hosts; parsed opportunistically (see module docstring).
         4: "config_entries/get",
     }
     # Extra payload fields per command id.
     command_extras: dict[int, dict[str, Any]] = {4: {"domain": "lifx"}}
     results: dict[int, Any] = {}
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(ws_url, timeout=timeout_s) as ws:
-                greeting = await ws.receive_json(timeout=timeout_s)
-                if greeting.get("type") != "auth_required":
-                    raise RuntimeError(f"Unexpected HA greeting: {greeting.get('type')}")
-                await ws.send_json({"type": "auth", "access_token": token})
-                auth_reply = await ws.receive_json(timeout=timeout_s)
-                if auth_reply.get("type") != "auth_ok":
-                    raise RuntimeError("Home Assistant rejected the access token")
-                for command_id, command_type in commands.items():
-                    payload = {"id": command_id, "type": command_type}
-                    payload.update(command_extras.get(command_id, {}))
-                    await ws.send_json(payload)
-                while len(results) < len(commands):
-                    message = await ws.receive_json(timeout=timeout_s)
-                    if message.get("type") == "result" and message.get("id") in commands:
-                        if not message.get("success", True):
-                            if message["id"] == 4:
-                                # Config entries are an enhancement
-                                # (primary IPs); registries + LAN still
-                                # work without them.
-                                _LOGGER.warning(
-                                    "HA config_entries/get failed: %s",
-                                    message.get("error"),
-                                )
-                                results[4] = []
-                                continue
-                            raise RuntimeError(
-                                f"HA command {commands[message['id']]} failed: "
-                                f"{message.get('error')}"
+        async with (
+            aiohttp.ClientSession() as session,
+            session.ws_connect(ws_url, timeout=timeout_s) as ws,
+        ):
+            greeting = await ws.receive_json(timeout=timeout_s)
+            if greeting.get("type") != "auth_required":
+                raise RuntimeError(  # noqa: TRY301 - linear handshake flow
+                    f"Unexpected HA greeting: {greeting.get('type')}"
+                )
+            await ws.send_json({"type": "auth", "access_token": token})
+            auth_reply = await ws.receive_json(timeout=timeout_s)
+            if auth_reply.get("type") != "auth_ok":
+                raise RuntimeError(  # noqa: TRY301 - linear handshake flow
+                    "Home Assistant rejected the access token"
+                )
+            for command_id, command_type in commands.items():
+                payload = {"id": command_id, "type": command_type}
+                payload.update(command_extras.get(command_id, {}))
+                await ws.send_json(payload)
+            while len(results) < len(commands):
+                message = await ws.receive_json(timeout=timeout_s)
+                if message.get("type") == "result" and message.get("id") in commands:
+                    if not message.get("success", True):
+                        if message["id"] == 4:
+                            # Config entries are an enhancement
+                            # (primary IPs); registries + LAN still
+                            # work without them.
+                            _LOGGER.warning(
+                                "HA config_entries/get failed: %s",
+                                message.get("error"),
                             )
-                        results[message["id"]] = message.get("result")
+                            results[4] = []
+                            continue
+                        raise RuntimeError(  # noqa: TRY301 - linear handshake flow
+                            f"HA command {commands[message['id']]} failed: {message.get('error')}"
+                        )
+                    results[message["id"]] = message.get("result")
     except RuntimeError:
         raise
-    except Exception as err:  # noqa: BLE001 - normalized for the provider
+    except Exception as err:
         raise RuntimeError(f"Could not query Home Assistant at {ha_url}: {err}") from err
 
     lights = parse_ha_registries(results[1], results[2], results[3])
@@ -594,7 +597,8 @@ async def fetch_ha_lifx_lights(
 
 
 async def discover_lan(timeout_s: float = const.LAN_DISCOVERY_TIMEOUT_S) -> list[LanDevice]:
-    """Discover LIFX devices on the LAN with lifx-async.
+    """
+    Discover LIFX devices on the LAN with lifx-async.
 
     Uses the library's confirmed ``lifx.network.discovery.discover_devices``
     async generator (UDP broadcast; the library's ``lifx.discover`` also
@@ -631,22 +635,25 @@ async def _enrich_lan_device(discovered: Any, lan: LanDevice) -> LanDevice:
         name = None
         try:
             name = await device.get_label()
-        except Exception:  # noqa: BLE001
+        except Exception:
             name = getattr(device, "label", None)
 
         product = None
         try:
             version = await device.get_version()
             product = getattr(version, "product", None)
-        except Exception:  # noqa: BLE001
+        except Exception:
             product = None
 
         class_name = type(device).__name__
         is_ceiling = class_name == "CeilingLight"
         is_matrix = is_ceiling or class_name == "MatrixLight"
-        # TODO(live-verify): Device.capabilities is a ProductInfo with a
+        # Known limitation: Device.capabilities is a ProductInfo with a
         # has_matrix flag in lifx-async 8.0.0; the class-name check above
         # is the confirmed path, this getattr is a belt-and-braces extra.
+        # Whether has_matrix on its own correctly identifies every
+        # matrix product is unverified against real hardware — see
+        # "Known limitations" in the README.
         capabilities = getattr(device, "capabilities", None)
         if capabilities is not None and getattr(capabilities, "has_matrix", False):
             is_matrix = True
@@ -658,7 +665,7 @@ async def _enrich_lan_device(discovered: Any, lan: LanDevice) -> LanDevice:
                 if chain:
                     width = int(chain[0].width)
                     height = int(chain[0].height)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.debug("No tile chain for %s", lan.serial, exc_info=True)
 
         return LanDevice(
@@ -672,15 +679,13 @@ async def _enrich_lan_device(discovered: Any, lan: LanDevice) -> LanDevice:
             height=height,
             port=lan.port,
         )
-    except Exception:  # noqa: BLE001 - enrichment is optional by design
+    except Exception:
         _LOGGER.debug("Could not enrich LIFX device %s", lan.serial, exc_info=True)
         return lan
     finally:
         if device is not None:
-            try:
+            with suppress(Exception):
                 await device.close()
-            except Exception:  # noqa: BLE001
-                pass
 
 
 # ---------------------------------------------------------------------------
@@ -696,9 +701,9 @@ _SWEEP_SOURCE_ID = 0x4C465853  # "LFXS"
 
 def build_get_service_packet(source_id: int = _SWEEP_SOURCE_ID) -> bytes:
     """Build a raw LIFX GetService probe packet (36-byte header, no payload)."""
-    import struct
+    import struct  # noqa: PLC0415 - lazy: pure helpers stay import-free
 
-    header = struct.pack(
+    return struct.pack(
         "<HHI8s6sBBQHH",
         _HEADER_LEN,
         1024 | (1 << 12) | (1 << 13),  # protocol | addressable | tagged
@@ -711,11 +716,11 @@ def build_get_service_packet(source_id: int = _SWEEP_SOURCE_ID) -> bytes:
         _MSG_GET_SERVICE,
         0,  # reserved
     )
-    return header
 
 
 def parse_state_service(data: bytes) -> str | None:
-    """Extract the serial from a raw StateService reply, else None.
+    """
+    Extract the serial from a raw StateService reply, else None.
 
     Pure function (unit-tested): checks length, message type and the
     UDP service byte; the serial is the reply header's target field.
@@ -749,7 +754,8 @@ async def sweep_for_serials(
     seed_ips: Any,
     timeout_s: float = const.SWEEP_TIMEOUT_S,
 ) -> dict[str, str]:
-    """Find IPs for known serials by unicast-probing their likely subnets.
+    """
+    Find IPs for known serials by unicast-probing their likely subnets.
 
     Broadcast discovery is unreliable across VLANs/relays (it found
     barely half of a 66-light install in testing), and Home
@@ -760,7 +766,7 @@ async def sweep_for_serials(
     are already known to live (seeded from broadcast results).
     Returns {serial: ip} for the wanted serials that answered.
     """
-    import asyncio as _asyncio
+    import asyncio as _asyncio  # noqa: PLC0415 - lazy: pure helpers stay import-free
 
     wanted = {normalize_serial(serial) for serial in wanted_serials}
     wanted.discard("")
@@ -779,14 +785,11 @@ async def sweep_for_serials(
                 found[serial] = str(addr[0])
 
     transport, _protocol = await loop.create_datagram_endpoint(
-        _Probe, local_addr=("0.0.0.0", 0)
+        _Probe,
+        local_addr=("0.0.0.0", 0),  # noqa: S104 - replies arrive on any interface
     )
     try:
-        hosts = [
-            f"{prefix}.{host}"
-            for prefix in prefixes
-            for host in range(1, 255)
-        ]
+        hosts = [f"{prefix}.{host}" for prefix in prefixes for host in range(1, 255)]
         # Two blasts: some bulbs miss a probe while busy; the second
         # pass (~halfway through the window) catches most stragglers.
         for blast in range(2):
@@ -806,9 +809,7 @@ async def sweep_for_serials(
     return found
 
 
-def apply_sweep_results(
-    targets: Sequence[SyncTarget], found: Mapping[str, str]
-) -> int:
+def apply_sweep_results(targets: Sequence[SyncTarget], found: Mapping[str, str]) -> int:
     """Fill in missing light IPs from a sweep result; return how many."""
     filled = 0
     for target in targets:
@@ -817,8 +818,6 @@ def apply_sweep_results(
                 continue
             ip = found.get(light.serial)
             if ip:
-                from dataclasses import replace
-
                 target.lights[index] = replace(light, ip=ip)
                 filled += 1
     return filled
@@ -829,7 +828,7 @@ async def discover_targets(
     timeout_s: float = const.LAN_DISCOVERY_TIMEOUT_S,
     include_lan_only: bool = True,
 ) -> tuple[list[SyncTarget], list[LanDevice]]:
-    """Convenience: run LAN discovery and merge with HA lights."""
+    """Run LAN discovery and merge with HA lights (convenience wrapper)."""
     lan_devices = await discover_lan(timeout_s)
     return merge_targets(ha_lights, lan_devices, include_lan_only), lan_devices
 
@@ -845,13 +844,13 @@ __all__ = [
     "build_get_service_packet",
     "discover_lan",
     "discover_targets",
-    "parse_state_service",
-    "subnets_from_ips",
-    "sweep_for_serials",
     "fetch_ha_lifx_lights",
     "merge_targets",
     "normalize_serial",
     "parse_ha_config_entries",
     "parse_ha_registries",
+    "parse_state_service",
     "slugify",
+    "subnets_from_ips",
+    "sweep_for_serials",
 ]

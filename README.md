@@ -1,11 +1,11 @@
 # LIFX Lights Sync
 
-> **Status: alpha scaffold.** Modeled on Music Assistant's Hue Lights
-> Sync plugin, **not yet live-tested against a running Music Assistant**
-> with real LIFX lights. The pure modules (discovery, color, analyzer)
-> are unit-tested; the Sendspin bridge/provider integration is marked
-> `TODO(live-verify)` where the exact Music Assistant API surface still
-> needs confirmation on a live instance.
+> **Status: beta, live-tested on the maintainer's own Music Assistant
+> install** with real LIFX lights (end-to-end streaming verified
+> there). It has not yet been run against upstream Music Assistant
+> `dev` builds or other people's installs, and it is not yet part of
+> Music Assistant itself — treat other setups as untested. The pure
+> modules (discovery, color, analyzer) are unit-tested.
 
 A Music Assistant **plugin** that makes your LIFX lights react to
 whatever is playing — colors and brightness driven by the music, the
@@ -21,8 +21,8 @@ Sendspin player or group, and the lights start reacting.
 
 ## Features
 
-- **Home Assistant-first discovery** — lights keep their HA names and
-  areas, and HA config entries provide their IPs (see below).
+- **Home Assistant-first discovery** — lights keep their HA names,
+  areas and serials; IPs are resolved on the LAN (see below).
 - **LAN fallback** — works without Home Assistant, and fills IP gaps.
 - **Bulbs and matrix lights** — ordinary bulbs get one color; LIFX
   Ceiling / Tile-style matrix lights get a full per-zone frame
@@ -56,7 +56,9 @@ when the hass provider is not configured.
                   get_device_registry() / get_area_registry()
                   get_entity_registry()          [names/areas/entities]
                   hass.send_command("config_entries/get")
-                      -> data.host + data.serial  [PRIMARY IP SOURCE]
+                      -> parsed opportunistically: the API strips
+                         entry data today, so hosts normally do
+                         NOT come from HA (see key facts below)
 
    alternative ─► Home Assistant directly (URL + token, WebSocket API)
                   config/device_registry/list
@@ -66,13 +68,14 @@ when the hass provider is not configured.
                       -> same data as above
 
                       │                    │
-                      │ names/areas/IPs    │ no host for some lights,
-                      ▼                    │ or HA absent/unreachable
+                      │ names/areas/       │ lights still missing
+                      ▼ serials            │ an IP, or HA absent
                   ┌─────────────────────────────────────────┐
                   │ LAN discovery (lifx-async)              │
-                  │   UDP broadcast + mDNS                  │
+                  │   UDP broadcast + mDNS, then a unicast  │
+                  │   subnet sweep for missing serials      │
                   │   -> serial, IP, label, product,        │
-                  │      matrix width/height  [FALLBACK IP, │
+                  │      matrix width/height  [IP SOURCE,   │
                   │      GAP-FILLER, CROSS-CHECK, GEOMETRY] │
                   └─────────────────────────────────────────┘
                       │
@@ -140,14 +143,17 @@ yet.
 | Discovery source | `discovery_source` | `auto` | `auto` = MA hass provider → direct HA (if configured) → LAN; `hass` = MA's HA provider only; `ha` = direct HA only (LAN fills IP gaps in both HA modes); `lan` = LAN only |
 | Home Assistant URL | `ha_url` | — | Base URL, e.g. `http://homeassistant.local:8123`. Only needed when MA's Home Assistant provider is not configured |
 | Home Assistant token | `ha_token` | — | Long-lived access token (stored as a secret). Same condition as above — with the hass provider configured, no HA credentials are entered in this plugin at all |
-| Brightness (%) | `brightness` | 80 | Cap on effect brightness |
+| Brightness (%) | `brightness` | 80 | Cap on effect brightness (the peaks) |
+| Brightness floor (%) | `brightness_floor` | 0 | Resting brightness between hits; 0 keeps each mode's built-in rest level |
 | Color mode | `color_mode` | `smooth` | `smooth` / `ambient` / `flashing` / `energetic` / `bass` |
 | Latency compensation (ms) | `latency_ms` | 0 | Shifts render time for speaker/network latency |
 | Max sends per second | `send_rate_hz` | 20 | Per-light rate limit |
+| Debug frame log | `debug_frame_log` | off | Logs one FRAMELOG line per second per streaming target with the mean/max brightness actually commanded (for diagnosing sync from the server log) |
 
-Brightness, color mode, latency and send rate are live-applied to
-running bridges (no restart needed). Discovery source and HA settings
-take effect on the next provider load.
+Brightness, brightness floor, color mode, latency, send rate and the
+debug frame log are live-applied to running bridges (no restart
+needed). Discovery source and HA settings take effect on the next
+provider load.
 
 ## Architecture / file map
 
@@ -172,7 +178,7 @@ lifx_lights_sync/
 │                    bulb and matrix writes via lifx-async.
 ├── bridge.py        Sendspin bridge manager + per-target bridge:
 │                    virtual LIGHT players, visualizer/color roles,
-│                    30 Hz render loop, 2 s debounced stop.
+│                    50 Hz render loop, 2 s debounced stop.
 └── provider.py      PluginProvider: config entries, loaded_in_mass,
                      update_config, unload.
 tests/               stdlib unittest tests for the pure modules.
@@ -197,33 +203,53 @@ python3 -m json.tool lifx_lights_sync/strings.json > /dev/null
 To try the LIFX output path against real hardware you need a Music
 Assistant instance with the Sendspin provider enabled, `lifx-async`
 installed, and LIFX lights on the LAN. The Music Assistant / Sendspin
-call shapes in `bridge.py` and `provider.py` were aligned against the
-installed Music Assistant source and import-verified in the live
-container; the remaining `TODO(live-verify)` markers are all in
-`discovery.py` / `lifx_output.py` (lifx-async device semantics that
-only a run against real lights can confirm).
+call shapes in `bridge.py` and `provider.py` were aligned against
+the Music Assistant source and import-verified, and the full path
+has been run end-to-end against real lights on the maintainer's
+install.
+
+Lint and type checks mirror Music Assistant's own tooling
+(ruff + mypy via pre-commit, configured in `pyproject.toml`):
+
+```bash
+pip install pre-commit && pre-commit run --all-files
+```
+
+## Known limitations
+
+- **Matrix classification is partly unverified.** A LAN-discovered
+  device is treated as a matrix light when its lifx-async class is
+  `MatrixLight`/`CeilingLight` (confirmed path) *or* when its
+  reported capabilities carry a `has_matrix` flag (a belt-and-braces
+  extra). Whether the `has_matrix` flag on its own correctly
+  identifies every matrix product — and never misfires on ordinary
+  bulbs — has not been verified against the full range of real
+  hardware; a false positive would give a bulb its own multi-channel
+  matrix target instead of treating it as a single light.
+- **Upstream drift.** The bridge/provider API surface is aligned to
+  the Music Assistant / aiosendspin versions the maintainer runs;
+  newer upstream builds may restructure the provider APIs this
+  plugin builds on.
 
 ## Roadmap
 
-- [ ] First live run in Music Assistant: add the provider instance in
-      the UI and confirm end-to-end streaming (registration, role
-      callbacks and player removal are aligned to the installed
-      source; lifx-async output semantics remain `TODO(live-verify)`).
 - [ ] Measure sustained frame rate on a 16 x 8 ceiling and, if needed,
       switch matrix writes to the lifx-async `Animator` fast path
       (`device.animator.prepare()` + synchronous `send_frame()`).
 - [ ] Per-target settings (e.g. different modes per room).
 - [ ] Re-discovery / IP refresh on stream start (lights change IPs).
-- [ ] Submit to the Music Assistant custom-provider community once
-      the live path is verified.
 
 ## Credits
 
-- Architectural blueprint: Music Assistant's **Hue Lights Sync**
-  plugin (`providers/hue_entertainment`, reference revision 73c3e59)
-  — the Sendspin visualizer bridge, virtual LIGHT player pattern and
-  analyzer mode presets are modeled on it. No Hue-specific streaming
-  code (DTLS / HueStream) is used.
+- Adapted from Music Assistant's **Hue Lights Sync** plugin
+  (`providers/hue_entertainment`, reference revision 73c3e59): the
+  analyzer is an adapted port of the Hue analyzer (mode presets and
+  rendering mechanics), and the Sendspin visualizer bridge and
+  virtual LIGHT player pattern are adapted from the same plugin. No
+  Hue-specific streaming code (DTLS / HueStream) is used.
+- The low-end behavior of the Energetic and Bass modes was informed
+  by observing **LedFx**'s Filter effect; the behavior was
+  reimplemented from observation and no LedFx code is used.
 - LIFX communication: **lifx-async** 8.0.0 by Avi Miller
   (https://github.com/Djelibeybi/lifx-async), also used by LedFx.
 - LIFX(R) is a trademark of LIFX, Inc. This project is not affiliated

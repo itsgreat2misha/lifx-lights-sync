@@ -2,29 +2,32 @@
 
 import sys
 import unittest
-from collections import namedtuple
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lifx_lights_sync.discovery import HaDiscoveryError  # noqa: E402
-from lifx_lights_sync.ha_via_mass import fetch_ha_via_hass_provider  # noqa: E402
+from lifx_lights_sync.discovery import HaDiscoveryError
+from lifx_lights_sync.ha_via_mass import fetch_ha_via_hass_provider
+
 
 # The hass provider's entity registry uses exactly this abbreviated
 # NamedTuple shape (platform/device_id/area_id), keyed by entity_id.
-HassRegistryEntity = namedtuple(
-    "HassRegistryEntity", ["platform", "device_id", "area_id"]
-)
+class HassRegistryEntity(NamedTuple):
+    platform: str
+    device_id: str
+    area_id: str | None
+
 
 DEVICE_ID = "2b09adf9fb01b1dd6e4a67bafd9e8466"
-SERIAL = "d073d587112b"
+SERIAL = "d073d500000a"
 
 DEVICES = {
     DEVICE_ID: {
         "id": DEVICE_ID,
         "manufacturer": "LIFX",
         "identifiers": [["lifx", SERIAL]],
-        "connections": [["mac", "d0:73:d5:87:11:2b"]],
+        "connections": [["mac", "d0:73:d5:00:00:0a"]],
         "name": "Kitchen Ceiling",
         "name_by_user": None,
         "area_id": "kitchen",
@@ -40,9 +43,7 @@ DEVICES = {
     },
 }
 ENTITIES = {
-    "light.kitchen_ceiling": HassRegistryEntity(
-        platform="lifx", device_id=DEVICE_ID, area_id=None
-    ),
+    "light.kitchen_ceiling": HassRegistryEntity(platform="lifx", device_id=DEVICE_ID, area_id=None),
     "sensor.kitchen_temperature": HassRegistryEntity(
         platform="lifx", device_id=DEVICE_ID, area_id=None
     ),
@@ -51,7 +52,7 @@ AREAS = {"kitchen": {"area_id": "kitchen", "name": "Kitchen", "aliases": []}}
 ENTRIES = [
     {
         "domain": "lifx",
-        "data": {"host": "192.168.3.191", "serial": SERIAL},
+        "data": {"host": "192.0.2.191", "serial": SERIAL},
         "unique_id": SERIAL,
     },
     {"domain": "hue", "data": {"host": "10.0.0.9"}, "unique_id": "hue-bridge"},
@@ -107,7 +108,7 @@ class TestFetchViaHassProvider(unittest.IsolatedAsyncioTestCase):
         light = lights[0]
         self.assertEqual(light.serial, SERIAL)
         # Host picked up from the send_command("config_entries/get") result.
-        self.assertEqual(light.host, "192.168.3.191")
+        self.assertEqual(light.host, "192.0.2.191")
         self.assertEqual(light.area_name, "Kitchen")
         self.assertEqual(light.entity_ids, ("light.kitchen_ceiling",))
         self.assertEqual(provider.hass.commands, ["config_entries/get"])
@@ -168,7 +169,7 @@ class TestFetchViaHassProvider(unittest.IsolatedAsyncioTestCase):
 
         lights = await fetch_ha_via_hass_provider(DictProvider())
         self.assertEqual(len(lights), 1)
-        self.assertEqual(lights[0].host, "192.168.3.191")
+        self.assertEqual(lights[0].host, "192.0.2.191")
 
 
 if __name__ == "__main__":

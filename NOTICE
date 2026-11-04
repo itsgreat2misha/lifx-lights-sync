@@ -1,19 +1,27 @@
 LIFX Lights Sync
 Copyright 2026 itsgreat2misha
 
-This product includes software developed as an original work by the
-author, architecturally modeled on the "Hue Lights Sync" plugin
-(hue_entertainment) from the Music Assistant server project:
+Portions of this project are adapted from the "Hue Lights Sync"
+plugin (hue_entertainment) in the Music Assistant server project:
 
     Music Assistant server — https://github.com/music-assistant/server
     Copyright the Music Assistant contributors
     Licensed under the Apache License, Version 2.0
 
-The Sendspin visualizer/color bridge structure, the virtual LIGHT
-player registration pattern, and the analyzer's mode presets in this
-project follow the design of that plugin (reference revision 73c3e59).
-No code from the Hue plugin's Hue-specific streaming layer (DTLS /
-HueStream) is used; the LIFX output side is original.
+The analyzer is an adapted port of that plugin's analyzer: its mode
+presets and its spectrum/peak/beat rendering mechanics were carried
+over and reworked for LIFX targets. The Sendspin visualizer/color
+bridge structure and the virtual LIGHT player registration pattern in
+the bridge and provider modules are likewise adapted from the Hue
+plugin (reference revision 73c3e59). No code from the Hue plugin's
+Hue-specific streaming layer (DTLS / HueStream) is used; the LIFX
+output side is original.
+
+The low-end behavior of the Energetic and Bass analyzer modes was
+informed by observing the behavior of LedFx's Filter effect
+(https://github.com/LedFx/LedFx, GPL-3.0). That behavior was
+reimplemented from observation and measurement; no LedFx code is
+used in this project.
 
 This product uses the lifx-async library to communicate with LIFX
 devices over the local network:

@@ -6,9 +6,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lifx_lights_sync.analyzer import (  # noqa: E402
-    LightChannel,
+from lifx_lights_sync.analyzer import (
     LifxAudioAnalyzer,
+    LightChannel,
 )
 
 CHANNELS = [
@@ -112,9 +112,7 @@ class TestAmbientIgnoresOnset(unittest.TestCase):
 
     def test_energetic_does_respond_to_transients_more_than_ambient(self):
         def run(mode):
-            analyzer = LifxAudioAnalyzer(
-                CHANNELS, mode=mode, brightness=0.8, palette=FLAT_PALETTE
-            )
+            analyzer = LifxAudioAnalyzer(CHANNELS, mode=mode, brightness=0.8, palette=FLAT_PALETTE)
             for step in range(9):
                 analyzer.queue_spectrum(step * 50_000, [0.02] * 17)
             analyzer.queue_spectrum(500_000, [0.95] * 17)
@@ -209,9 +207,7 @@ class TestPlayheadPromotion(unittest.TestCase):
         self.assertGreater(at_beat, mid_segment)
 
     def test_peak_boost_flashes_then_decays(self):
-        analyzer = LifxAudioAnalyzer(
-            CHANNELS, mode="smooth", brightness=0.8, palette=FLAT_PALETTE
-        )
+        analyzer = LifxAudioAnalyzer(CHANNELS, mode="smooth", brightness=0.8, palette=FLAT_PALETTE)
         analyzer.queue_spectrum(1_000_000, [0.5] * 17)
         base = _total(analyzer.render(1_000_000))
         analyzer.queue_peak(2_000_000, 255)
@@ -226,21 +222,20 @@ if __name__ == "__main__":
 
 
 class TestBassBrightnessPump(unittest.TestCase):
-    """Energetic routes the bass transient into a global brightness lift.
+    """
+    Energetic routes the bass transient into a global brightness lift.
 
     Single channel + flat palette: the channel multiplier sees the mean
     of all bins (identical for both frames) and the palette contributes
     no saturation variance, so any total difference is the bass pump.
     """
 
-    ONE = [LightChannel("aaaa00000001", 0.0)]
+    ONE = (LightChannel("aaaa00000001", 0.0),)
     BASS_FRAME = [45000.0, 45000.0] + [100.0] * 15
     TREBLE_FRAME = [100.0] * 10 + [45000.0] * 2 + [100.0] * 5
 
     def _run(self, mode, frame):
-        analyzer = LifxAudioAnalyzer(
-            self.ONE, mode=mode, brightness=0.8, palette=FLAT_PALETTE
-        )
+        analyzer = LifxAudioAnalyzer(self.ONE, mode=mode, brightness=0.8, palette=FLAT_PALETTE)
         for i in range(10):  # quiet lead-in so the baseline settles low
             analyzer.queue_spectrum(1_000_000 + i * 50_000, [1000.0] * 17)
         analyzer.render(1_500_000)
@@ -256,9 +251,7 @@ class TestBassBrightnessPump(unittest.TestCase):
     def test_energetic_ignores_high_frequencies(self):
         # Bins above the low band (voice/instruments) must not move
         # the light at all in the bass-heavy mode.
-        quiet = LifxAudioAnalyzer(
-            self.ONE, mode="energetic", brightness=0.8, palette=FLAT_PALETTE
-        )
+        quiet = LifxAudioAnalyzer(self.ONE, mode="energetic", brightness=0.8, palette=FLAT_PALETTE)
         for i in range(10):
             quiet.queue_spectrum(1_000_000 + i * 50_000, [1000.0] * 17)
         quiet.render(1_500_000)
@@ -270,8 +263,11 @@ class TestBassBrightnessPump(unittest.TestCase):
         # With brightness 1.0 and floor 0.1, a quiet passage must rest
         # at ~10% output while a bass hit still pops far above it.
         quiet = LifxAudioAnalyzer(
-            self.ONE, mode="energetic", brightness=1.0,
-            brightness_floor=0.1, palette=FLAT_PALETTE,
+            self.ONE,
+            mode="energetic",
+            brightness=1.0,
+            brightness_floor=0.1,
+            palette=FLAT_PALETTE,
         )
         for i in range(12):
             quiet.queue_spectrum(1_000_000 + i * 50_000, [1000.0] * 17)
@@ -279,8 +275,11 @@ class TestBassBrightnessPump(unittest.TestCase):
         rest = _total(quiet.render(2_000_000))
         self.assertLess(rest, 3 * 255 * 0.2)  # well under the old 30% rest
         loud = LifxAudioAnalyzer(
-            self.ONE, mode="energetic", brightness=1.0,
-            brightness_floor=0.1, palette=FLAT_PALETTE,
+            self.ONE,
+            mode="energetic",
+            brightness=1.0,
+            brightness_floor=0.1,
+            palette=FLAT_PALETTE,
         )
         for i in range(12):
             loud.queue_spectrum(1_000_000 + i * 50_000, self.BASS_FRAME)
@@ -291,9 +290,7 @@ class TestBassBrightnessPump(unittest.TestCase):
     def test_smooth_still_reacts_to_high_frequencies(self):
         # The band restriction is Energetic-only: Smooth keeps the
         # full-range response, so a loud high frame changes its output.
-        quiet = LifxAudioAnalyzer(
-            self.ONE, mode="smooth", brightness=0.8, palette=FLAT_PALETTE
-        )
+        quiet = LifxAudioAnalyzer(self.ONE, mode="smooth", brightness=0.8, palette=FLAT_PALETTE)
         for i in range(10):
             quiet.queue_spectrum(1_000_000 + i * 50_000, [1000.0] * 17)
         quiet.render(1_500_000)
@@ -303,7 +300,8 @@ class TestBassBrightnessPump(unittest.TestCase):
 
 
 class TestBassMode(unittest.TestCase):
-    """Dedicated Bass mode: bins 0-1 only, shared envelope, nothing else.
+    """
+    Dedicated Bass mode: bins 0-1 only, shared envelope, nothing else.
 
     Regression target: Energetic still reacted to content up to
     887 Hz (bins 2-3) and to every scheduled beat. Bass mode must be
@@ -316,9 +314,7 @@ class TestBassMode(unittest.TestCase):
     TREBLE_FRAME = [100.0] * 10 + [45000.0] * 2 + [100.0] * 5
 
     def _analyzer(self):
-        return LifxAudioAnalyzer(
-            CHANNELS, mode="bass", brightness=0.8, palette=FLAT_PALETTE
-        )
+        return LifxAudioAnalyzer(CHANNELS, mode="bass", brightness=0.8, palette=FLAT_PALETTE)
 
     def _settled(self, frame):
         """Analyzer fed 10 quiet frames, settled, then one test frame."""

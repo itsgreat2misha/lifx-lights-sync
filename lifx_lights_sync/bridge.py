@@ -13,8 +13,9 @@ since LIFX lights do not revert on their own — snapshots each target's
 state at stream start and restores it at stream stop.
 
 All Music Assistant / aiosendspin imports and call shapes in this
-module were aligned against the installed Music Assistant in the
-user's container (aiosendspin 10.2.1): ``register_external_player``
+module were aligned against the Music Assistant / aiosendspin API
+surface this plugin targets (aiosendspin 10.2.1):
+``register_external_player``
 is a *synchronous* call returning a ``SendspinClient``; roles are
 fetched via ``client.roles_by_family(...)`` and subscribed via
 ``client.attach_preinitialized_roles()``; the render clock is
@@ -38,17 +39,16 @@ from aiosendspin.models.visualizer import (
     ClientHelloVisualizerSupport,
     VisualizerStatePayload,
 )
-from music_assistant_models.enums import PlayerType
-
 from music_assistant.providers.sendspin.bridge_role import (
     COLOR_BRIDGE_ROLE_ID,
     VISUALIZER_BRIDGE_ROLE_ID,
     BridgeColorRole,
     BridgeVisualizerRole,
 )
+from music_assistant_models.enums import PlayerType
 
 from . import constants as const
-from .analyzer import LifxAudioAnalyzer
+from .analyzer import LifxAudioAnalyzer, LightColorCommand
 from .color import build_palette
 from .discovery import SyncTarget
 from .lifx_output import LifxSender
@@ -63,18 +63,17 @@ if TYPE_CHECKING:
         SendspinServer,
     )
     from aiosendspin.server.roles.visualizer.features import ExtractedFrame
-
     from music_assistant.providers.sendspin.provider import SendspinProvider
 
     from .provider import LifxLightsSyncProvider
 
 _LOGGER = logging.getLogger(__name__)
 
-# Render loop rate: the analyzer renders at 30 Hz like the Hue bridge;
-# the LIFX sender rate-limits actual device writes per light
-# (send_rate_hz, default 20/s), so the faster render rate only smooths
-# interpolation, it does not flood the lights.
-_RENDER_RATE_HZ = 50
+# Render loop rate: frames are rendered at 50 Hz; the LIFX sender
+# rate-limits actual device writes per light (send_rate_hz, default
+# 20/s), so the faster render rate only smooths interpolation, it
+# does not flood the lights.
+_RENDER_RATE_HZ = const.RENDER_FPS
 _RENDER_PERIOD_S = 1.0 / _RENDER_RATE_HZ
 # Visualizer feature rate requested from the extraction pipeline
 # (matches the Hue bridge; its filters are tuned for ~20 Hz input).
@@ -85,9 +84,7 @@ _STOP_DEBOUNCE_S = 2.0
 
 
 def _client_id_for(target_id: str) -> str:
-    safe = "".join(
-        char if char.isalnum() or char in "-_" else "-" for char in target_id
-    )
+    safe = "".join(char if char.isalnum() or char in "-_" else "-" for char in target_id)
     return f"lifx-{safe}"[:64]
 
 
@@ -151,13 +148,11 @@ class LifxTargetBridge:
 
         # Register this client as a LIGHT player type with the Sendspin
         # provider so the resulting player shows up correctly in the UI.
-        sendspin_prov: SendspinProvider | None = self.mass.get_provider("sendspin")  # type: ignore[assignment]
+        sendspin_prov: SendspinProvider | None = self.mass.get_provider("sendspin")
         if sendspin_prov:
             sendspin_prov.register_bridge_player_type(client_id, PlayerType.LIGHT)
 
-        support = ClientHelloVisualizerSupport(
-            buffer_capacity=const.VISUALIZER_BUFFER_CAPACITY
-        )
+        support = ClientHelloVisualizerSupport(buffer_capacity=const.VISUALIZER_BUFFER_CAPACITY)
         request = VisualizerStatePayload(
             rate_max=_VISUALIZER_RATE_HZ,
             # Peaks requested as a fallback for when beats aren't computed yet.
@@ -311,9 +306,7 @@ class LifxTargetBridge:
             with suppress(asyncio.CancelledError):
                 await self._start_task
         if self._is_streaming:
-            self.logger.info(
-                "Visualizer stream ended for target '%s'", self.target.name
-            )
+            self.logger.info("Visualizer stream ended for target '%s'", self.target.name)
             await self._stop_streaming()
 
     # -- visualizer / color callbacks --------------------------------------
@@ -328,9 +321,7 @@ class LifxTargetBridge:
         if self._analyzer is None or not (self._is_streaming or self._starting):
             return
         if frame.spectrum is not None:
-            self._analyzer.queue_spectrum(
-                frame.timestamp_us, frame.spectrum.tolist()
-            )
+            self._analyzer.queue_spectrum(frame.timestamp_us, frame.spectrum.tolist())
         if frame.peak is not None:
             self._analyzer.queue_peak(frame.timestamp_us, frame.peak)
 
@@ -369,8 +360,9 @@ class LifxTargetBridge:
 
     # -- render loop ---------------------------------------------------------
 
-    def _note_frame_for_debug_log(self, commands: list) -> None:
-        """Aggregate commanded brightness; emit one FRAMELOG line/second.
+    def _note_frame_for_debug_log(self, commands: list[LightColorCommand]) -> None:
+        """
+        Aggregate commanded brightness; emit one FRAMELOG line/second.
 
         Read-only observation of what the analyzer commanded (the max
         RGB channel per command, 0.0-1.0) — it never touches the send
@@ -401,9 +393,7 @@ class LifxTargetBridge:
         """Begin the fixed-rate render+send loop."""
         if self._render_handle is not None:
             return
-        self._render_handle = self.mass.loop.call_later(
-            _RENDER_PERIOD_S, self._render_tick
-        )
+        self._render_handle = self.mass.loop.call_later(_RENDER_PERIOD_S, self._render_tick)
 
     def _cancel_render_loop(self) -> None:
         """Cancel the fixed-rate render+send loop."""
@@ -429,22 +419,16 @@ class LifxTargetBridge:
                 # send): hand the frame to a task, and skip this tick
                 # if the previous frame is still being written so sends
                 # can never pile up.
-                if commands and (
-                    self._send_task is None or self._send_task.done()
-                ):
+                if commands and (self._send_task is None or self._send_task.done()):
                     self._send_task = self.mass.create_task(
                         self._sender.send(commands, self.target)
                     )
         except Exception:
             # One bad tick must not kill the loop: log and reschedule below.
-            self.logger.exception(
-                "LIFX render tick failed for target '%s'", self.target.name
-            )
+            self.logger.exception("LIFX render tick failed for target '%s'", self.target.name)
         finally:
             if self._is_streaming:
-                self._render_handle = self.mass.loop.call_later(
-                    _RENDER_PERIOD_S, self._render_tick
-                )
+                self._render_handle = self.mass.loop.call_later(_RENDER_PERIOD_S, self._render_tick)
 
 
 class LifxBridgeManager:
@@ -478,9 +462,7 @@ class LifxBridgeManager:
         """Set up bridges for all sync targets."""
         sendspin_server = self.sendspin_server
         if sendspin_server is None:
-            self.logger.warning(
-                "Sendspin provider not available, cannot set up LIFX bridges"
-            )
+            self.logger.warning("Sendspin provider not available, cannot set up LIFX bridges")
             return
 
         # Remove bridges for targets that no longer exist.
@@ -525,9 +507,7 @@ class LifxBridgeManager:
             try:
                 await bridge.start()
             except Exception:
-                self.logger.warning(
-                    "Failed to start bridge for target '%s'", target.name
-                )
+                self.logger.warning("Failed to start bridge for target '%s'", target.name)
                 with suppress(Exception):
                     await bridge.stop()
                 continue

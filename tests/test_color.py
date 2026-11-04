@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lifx_lights_sync.color import (  # noqa: E402
+from lifx_lights_sync.color import (
     build_palette,
     clamp,
     hsbk_to_rgb,
@@ -44,7 +44,7 @@ class TestRgbToHsbk(unittest.TestCase):
     def test_round_trip_approximately(self):
         for rgb in [(255, 0, 0), (0, 128, 255), (200, 200, 200), (64, 200, 120)]:
             back = hsbk_to_rgb(rgb_to_hsbk(rgb))
-            for original, restored in zip(rgb, back):
+            for original, restored in zip(rgb, back, strict=True):
                 self.assertLessEqual(abs(original - restored), 2)
 
     def test_scale_and_clamp_helpers(self):
@@ -63,9 +63,7 @@ class TestBuildPalette(unittest.TestCase):
         self.assertGreaterEqual(len(palette), 2)
 
     def test_near_blacks_are_dropped(self):
-        palette = build_palette(
-            {"primary": {"red": 4, "green": 2, "blue": 3}, "accent": "#ff8800"}
-        )
+        palette = build_palette({"primary": {"red": 4, "green": 2, "blue": 3}, "accent": "#ff8800"})
         self.assertNotIn((4, 2, 3), palette)
         self.assertTrue(any(max(rgb) > 100 for rgb in palette))
 
@@ -75,9 +73,7 @@ class TestBuildPalette(unittest.TestCase):
         self.assertTrue(all(max(rgb) > 150 for rgb in palette))
 
     def test_monochrome_falls_back_to_warm_cool_whites(self):
-        palette = build_palette(
-            {"primary": (240, 240, 240), "accent": (200, 200, 200)}
-        )
+        palette = build_palette({"primary": (240, 240, 240), "accent": (200, 200, 200)})
         self.assertEqual(len(palette), 2)
         self.assertNotEqual(palette[0], palette[1])
 

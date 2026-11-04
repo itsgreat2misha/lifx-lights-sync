@@ -1,4 +1,5 @@
-"""Home Assistant discovery via Music Assistant's own ``hass`` provider.
+"""
+Home Assistant discovery via Music Assistant's own ``hass`` provider.
 
 Music Assistant's Home Assistant provider (``music_assistant.providers
 .hass.HomeAssistantProvider``) already holds a connected, authenticated
@@ -33,7 +34,8 @@ fall back to the next discovery source.
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from .discovery import (
     HaDiscoveryError,
@@ -88,7 +90,8 @@ def _row_to_dict(value: Any, fields: Sequence[str]) -> dict[str, Any] | None:
 def _rows_from_keyed(
     payload: Any, fields: Sequence[str], key_field: str | None = None
 ) -> list[dict[str, Any]]:
-    """Normalize a registry payload into a list of plain dict rows.
+    """
+    Normalize a registry payload into a list of plain dict rows.
 
     Accepts a mapping keyed by id (the hass provider's shape), a plain
     sequence of rows, or a mapping wrapping rows under a plural key.
@@ -99,9 +102,7 @@ def _rows_from_keyed(
     if isinstance(payload, Mapping):
         for key in ("devices", "entities", "areas", "result"):
             wrapped = payload.get(key)
-            if isinstance(wrapped, (Mapping, Sequence)) and not isinstance(
-                wrapped, (str, bytes)
-            ):
+            if isinstance(wrapped, (Mapping, Sequence)) and not isinstance(wrapped, (str, bytes)):
                 return _rows_from_keyed(wrapped, fields, key_field)
         items: Sequence[tuple[Any, Any]] = list(payload.items())
         for key, value in items:
@@ -121,7 +122,8 @@ def _rows_from_keyed(
 
 
 async def fetch_ha_via_hass_provider(hass_provider: Any) -> list[HaLifxLight]:
-    """Fetch LIFX lights through Music Assistant's Home Assistant provider.
+    """
+    Fetch LIFX lights through Music Assistant's Home Assistant provider.
 
     :param hass_provider: A loaded ``hass`` provider instance (duck-typed).
     :raises HaDiscoveryError: provider missing/unavailable/not connected,
@@ -143,7 +145,7 @@ async def fetch_ha_via_hass_provider(hass_provider: Any) -> list[HaLifxLight]:
         areas = await hass_provider.get_area_registry()
     except HaDiscoveryError:
         raise
-    except Exception as err:  # noqa: BLE001 - normalized for the caller
+    except Exception as err:
         raise HaDiscoveryError(
             f"Could not read Home Assistant registries via the hass provider: {err}"
         ) from err
@@ -154,14 +156,17 @@ async def fetch_ha_via_hass_provider(hass_provider: Any) -> list[HaLifxLight]:
         _rows_from_keyed(areas, _AREA_FIELDS),
     )
 
-    # Config entries carry the primary serial -> host mapping. Like the
-    # direct path, a failure here is non-fatal: registries + LAN still
-    # work, the lights just fall back to LAN-resolved IPs.
+    # Config entries would carry the serial -> host mapping, but the
+    # WebSocket payload strips entry data today, so this normally
+    # yields no hosts; the parse is opportunistic (a future HA may
+    # expose them). Like the direct path, a failure here is non-fatal:
+    # registries + LAN still work, the lights just fall back to
+    # LAN-resolved IPs.
     hosts: dict[str, str] = {}
     try:
         entries = await hass_client.send_command("config_entries/get")
         hosts = parse_ha_config_entries(_rows_from_keyed(entries, _ENTRY_FIELDS))
-    except Exception:  # noqa: BLE001 - enhancement only, see above
+    except Exception:
         _LOGGER.warning(
             "config_entries/get via the hass provider failed; "
             "continuing without HA config-entry hosts",
