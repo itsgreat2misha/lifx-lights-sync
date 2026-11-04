@@ -247,6 +247,60 @@ pip install pre-commit && pre-commit run --all-files
   newer upstream builds may restructure the provider APIs this
   plugin builds on.
 
+## Troubleshooting
+
+- **No sync targets, or some lights are missing.** Discovery gets
+  light identity (names, areas, serials) from the Home Assistant
+  registries — through Music Assistant's Home Assistant provider
+  in `auto`/`hass` mode, or a direct Home Assistant connection in
+  `ha` mode — and light IPs from the LAN. Check that the
+  `discovery_source` setting matches your setup, that the hass
+  provider is configured (or that the direct HA URL and token from
+  the setup flow are valid), and that the missing lights are
+  present in Home Assistant. In `lan` mode, or when Home Assistant
+  is absent, targets come from LAN discovery alone.
+- **A light is known to Home Assistant but never reacts.** Its IP
+  still has to be found on the LAN: Home Assistant's registries do
+  not provide IPs, so the plugin uses broadcast/mDNS discovery and
+  then unicast-probes every host of the subnets where lights are
+  already known to live. Make sure the light is powered on and
+  reachable on the LAN from the Music Assistant server; a light on
+  an unreachable network segment cannot be written to.
+- **Targets appear but nothing plays to the lights.** Each sync
+  target is a virtual LIGHT player: it only reacts while it is
+  joined to a Sendspin player or group that is playing. Join the
+  target to the playing Sendspin player or group in Music
+  Assistant first.
+- **A setting seems to have no effect.** Brightness, brightness
+  floor, color mode, latency, send rate, and the debug frame log
+  are live-applied to running bridges, but `discovery_source`
+  takes effect on the next provider load — reload the provider or
+  restart Music Assistant after changing it.
+- **Diagnosing sync quality.** Turn on the Debug frame log setting
+  (`debug_frame_log`); each streaming target then logs one
+  FRAMELOG line per second with the mean/max brightness actually
+  commanded, which can be checked in the Music Assistant server
+  log.
+
+## Uninstalling
+
+1. In Music Assistant, remove or disable the **LIFX Lights Sync**
+   provider (Settings → Plugins) so its virtual LIGHT players and
+   sync targets are no longer loaded.
+2. If you installed it as a custom provider, delete the copied
+   `lifx_lights_sync/` folder from Music Assistant's custom
+   providers directory.
+3. Restart the Music Assistant server / custom-loader add-on so
+   the removal takes effect.
+
+Removing the provider does not change your LIFX lights or their
+Home Assistant setup: the lights themselves, and any Home
+Assistant configuration for them, are untouched. If you entered a
+direct Home Assistant URL and token in this plugin's setup flow,
+those credentials were stored by Music Assistant's setup-flow
+store; removing the provider in Music Assistant is also how that
+stored entry is removed.
+
 ## Roadmap
 
 - [ ] Measure sustained frame rate on a 16 x 8 ceiling and, if needed,
