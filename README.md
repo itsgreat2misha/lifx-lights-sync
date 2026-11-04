@@ -247,9 +247,8 @@ pip install pre-commit && pre-commit run --all-files
   rendering mechanics), and the Sendspin visualizer bridge and
   virtual LIGHT player pattern are adapted from the same plugin. No
   Hue-specific streaming code (DTLS / HueStream) is used.
-- The low-end behavior of the Energetic and Bass modes was informed
-  by observing **LedFx**'s Filter effect; the behavior was
-  reimplemented from observation and no LedFx code is used.
+- The Bass and Energetic modes' low-end behavior was inspired by
+  observing **LedFx**'s Filter effect; the implementation is original.
 - LIFX communication: **lifx-async** 8.0.0 by Avi Miller
   (https://github.com/Djelibeybi/lifx-async), also used by LedFx.
 - LIFX(R) is a trademark of LIFX, Inc. This project is not affiliated

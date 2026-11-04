@@ -17,12 +17,6 @@ plugin (reference revision 73c3e59). No code from the Hue plugin's
 Hue-specific streaming layer (DTLS / HueStream) is used; the LIFX
 output side is original.
 
-The low-end behavior of the Energetic and Bass analyzer modes was
-informed by observing the behavior of LedFx's Filter effect
-(https://github.com/LedFx/LedFx, GPL-3.0). That behavior was
-reimplemented from observation and measurement; no LedFx code is
-used in this project.
-
 This product uses the lifx-async library to communicate with LIFX
 devices over the local network:
 
