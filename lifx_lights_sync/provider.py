@@ -22,6 +22,15 @@ Discovery order for source ``auto`` (the default):
 3. LAN discovery (lifx-async), which also runs in the HA modes as a
    gap-filler for lights without an HA host and as the source of
    matrix geometry.
+
+The direct HA credentials are collected by the setup flow
+(``setup_flow.py``) and stored as the instance's ``setup_data``,
+following the pattern of Music Assistant's own ``hass`` provider;
+they are read back via ``get_setup_value`` in :meth:`_resolved_settings`.
+Installs that predate the setup flow keep working: ``get_setup_value``
+itself falls back to the stored config values on current servers, and
+on older servers without setup-flow support the provider reads those
+same config values directly.
 """
 
 from __future__ import annotations
@@ -47,7 +56,7 @@ from .discovery import (
 )
 from .ha_via_mass import fetch_ha_via_hass_provider
 from .lifx_output import open_devices
-from .settings import PluginSettings
+from .settings import PluginSettings, resolve_ha_credentials
 
 if TYPE_CHECKING:
     from music_assistant.mass import MusicAssistant
@@ -86,7 +95,7 @@ class LifxLightsSyncProvider(PluginProvider):
         super().__init__(mass, manifest, config, supported_features)
         self._bridge_manager: LifxBridgeManager | None = None
         self._devices: dict[str, Any] = {}
-        self._settings = PluginSettings.from_config(config)
+        self._settings = self._resolved_settings(config)
         self._rediscovery_task: asyncio.Task[None] | None = None
 
     @property
@@ -94,14 +103,37 @@ class LifxLightsSyncProvider(PluginProvider):
         """Return the current resolved plugin settings."""
         return self._settings
 
+    def _resolved_settings(self, config: ProviderConfig) -> PluginSettings:
+        """
+        Build settings from a config, overlaying setup-flow credentials.
+
+        The direct Home Assistant URL/token are collected by the setup
+        flow and stored as ``setup_data``; on servers that support it
+        they are read via ``get_setup_value`` (which itself falls back
+        to the stored config values, so installs that entered the
+        credentials in the old options form keep working untouched).
+        On older servers without ``get_setup_value``, the config values
+        are used as-is.
+        """
+        settings = PluginSettings.from_config(config)
+        get_setup_value = getattr(self, "get_setup_value", None)
+        if not callable(get_setup_value):
+            return settings
+        return resolve_ha_credentials(
+            settings,
+            get_setup_value(const.CONF_HA_URL, None),
+            get_setup_value(const.CONF_HA_TOKEN, None),
+        )
+
     async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
         """
         Return the (options) config entries for the LIFX Lights Sync provider.
 
-        There is no setup flow: discovery needs no pairing. When Music
-        Assistant's Home Assistant provider is configured, no HA
-        credentials are entered here at all — the HA URL/token entries
-        below are only for the direct-connection fallback.
+        These are runtime options only. The direct Home Assistant
+        credentials are not options: they are collected by the setup
+        flow (see ``setup_flow.py``), like in Music Assistant's own
+        ``hass`` provider. When Music Assistant's Home Assistant
+        provider is configured, no HA credentials are needed at all.
         """
         return (
             ConfigEntry(
@@ -116,20 +148,6 @@ class LifxLightsSyncProvider(PluginProvider):
                     ConfigValueOption(const.SOURCE_HA, "Home Assistant (direct URL + token)"),
                     ConfigValueOption(const.SOURCE_LAN, "LAN only"),
                 ],
-                category="settings",
-            ),
-            ConfigEntry(
-                key=const.CONF_HA_URL,
-                type=ConfigEntryType.STRING,
-                default_value=const.DEFAULT_HA_URL,
-                required=False,
-                category="settings",
-            ),
-            ConfigEntry(
-                key=const.CONF_HA_TOKEN,
-                type=ConfigEntryType.SECURE_STRING,
-                default_value=const.DEFAULT_HA_TOKEN,
-                required=False,
                 category="settings",
             ),
             ConfigEntry(
@@ -185,7 +203,7 @@ class LifxLightsSyncProvider(PluginProvider):
 
     async def loaded_in_mass(self) -> None:
         """Discover lights and set up sync-target bridges."""
-        self._settings = PluginSettings.from_config(self.config)
+        self._settings = self._resolved_settings(self.config)
         ha_backed = await self._discover_and_setup()
         if not ha_backed and self._settings.discovery_source in (
             const.SOURCE_AUTO,
@@ -389,7 +407,7 @@ class LifxLightsSyncProvider(PluginProvider):
         # the reload when every changed key can be applied in place.
         settings_keys = {f"values/{key}" for key in _LIVE_SETTING_KEYS}
         if changed_keys and changed_keys <= settings_keys and self._bridge_manager:
-            self._settings = PluginSettings.from_config(config)
+            self._settings = self._resolved_settings(config)
             self._bridge_manager.update_settings(self._settings)
             self.config = config
             return

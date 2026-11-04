@@ -1,6 +1,6 @@
 # LIFX Lights Sync
 
-> **Status: beta, live-tested on the maintainer's own Music Assistant
+> **Status: alpha, live-tested on the maintainer's own Music Assistant
 > install** with real LIFX lights (end-to-end streaming verified
 > there). It has not yet been run against upstream Music Assistant
 > `dev` builds or other people's installs, and it is not yet part of
@@ -45,27 +45,29 @@ Sendspin player or group, and the lights start reacting.
 The preferred path borrows Music Assistant's *own* Home Assistant
 connection: MA's `hass` provider already holds an authenticated HA
 WebSocket client, and this plugin reads the registries through its
-public methods plus `config_entries/get` through its generic command
-sender — the same pattern AI Radio uses for HA-backed engines. **With
-the hass provider configured, no HA credentials are entered in this
-plugin at all.** A direct HA URL + long-lived token is the alternative
-when the hass provider is not configured.
+public methods only — no raw WebSocket commands on the provider's
+client, matching the supported cross-provider pattern (the official
+`sendspin` provider soft-optionally uses the hass provider the same
+way). **With the hass provider configured, no HA credentials are
+entered in this plugin at all.** A direct HA URL + long-lived token
+is the alternative when the hass provider is not configured.
 
 ```
    preferred ───► MA hass provider (already connected to HA)
                   get_device_registry() / get_area_registry()
                   get_entity_registry()          [names/areas/entities]
-                  hass.send_command("config_entries/get")
-                      -> parsed opportunistically: the API strips
-                         entry data today, so hosts normally do
-                         NOT come from HA (see key facts below)
+                      -> public registry methods only: no raw HA
+                         commands, and entry hosts are NOT exposed
+                         on this path (see key facts below)
 
    alternative ─► Home Assistant directly (URL + token, WebSocket API)
                   config/device_registry/list
                   config/entity_registry/list
                   config/area_registry/list
                   config_entries/get
-                      -> same data as above
+                      -> parsed opportunistically for entry hosts:
+                         the API strips entry data today, so hosts
+                         normally do NOT come from HA either
 
                       │                    │
                       │ names/areas/       │ lights still missing
@@ -97,8 +99,8 @@ Key facts that shape this design:
   HA-known serial still missing an IP, the plugin unicast-probes
   every host of the subnets where lights are already known to live
   (raw LIFX GetService) — unicast UDP is routed, which closes the
-  gap. If a future HA ever exposes entry hosts, they win over LAN
-  results for the same serial.
+  gap. On the direct path, if a future HA ever exposes entry hosts,
+  they win over LAN results for the same serial.
 - When HA is absent or unreachable and the source is not `ha`/`hass`,
   LAN-only mode works on its own: bulbs group under one
   "LIFX Lights" target, matrix lights still get individual targets.
@@ -130,9 +132,13 @@ yet.
    select **LIFX Lights Sync**.
 4. If Music Assistant's Home Assistant provider is configured, you
    are done — discovery borrows its connection. Only if it is *not*
-   configured, add your HA URL and a long-lived access token in this
-   plugin's settings (profile → Security → Long-lived access tokens;
-   read-only registry access is all it needs).
+   configured, the setup flow asks for a direct connection instead:
+   enter your HA URL and a long-lived access token (HA profile →
+   Security → Long-lived access tokens; read-only registry access is
+   all it needs). The credentials are stored encrypted by Music
+   Assistant's setup-flow store, not in this plugin's settings; to
+   change or clear them later, use the plugin's **Reconfigure** action
+   (leaving the token empty there keeps the stored one).
 5. Each discovered target appears as a LIGHT player. Join it to any
    Sendspin player or group that is playing.
 
@@ -141,8 +147,8 @@ yet.
 | Setting | Key | Default | Notes |
 | ------- | --- | ------- | ----- |
 | Discovery source | `discovery_source` | `auto` | `auto` = MA hass provider → direct HA (if configured) → LAN; `hass` = MA's HA provider only; `ha` = direct HA only (LAN fills IP gaps in both HA modes); `lan` = LAN only |
-| Home Assistant URL | `ha_url` | — | Base URL, e.g. `http://homeassistant.local:8123`. Only needed when MA's Home Assistant provider is not configured |
-| Home Assistant token | `ha_token` | — | Long-lived access token (stored as a secret). Same condition as above — with the hass provider configured, no HA credentials are entered in this plugin at all |
+| Home Assistant URL | `ha_url` | — | *Setup flow, not a setting.* Base URL, e.g. `http://homeassistant.local:8123`. Only needed when MA's Home Assistant provider is not configured |
+| Home Assistant token | `ha_token` | — | *Setup flow, not a setting.* Long-lived access token, stored encrypted in Music Assistant's setup-data store. Same condition as above — with the hass provider configured, no HA credentials are entered in this plugin at all |
 | Brightness (%) | `brightness` | 80 | Cap on effect brightness (the peaks) |
 | Brightness floor (%) | `brightness_floor` | 0 | Resting brightness between hits; 0 keeps each mode's built-in rest level |
 | Color mode | `color_mode` | `smooth` | `smooth` / `ambient` / `flashing` / `energetic` / `bass` |
@@ -152,8 +158,14 @@ yet.
 
 Brightness, brightness floor, color mode, latency, send rate and the
 debug frame log are live-applied to running bridges (no restart
-needed). Discovery source and HA settings take effect on the next
-provider load.
+needed). Discovery source takes effect on the next provider load.
+
+**Upgrading:** installs that entered the HA URL/token in the plugin
+settings before the setup flow existed keep working unchanged — the
+stored values are still read. They move into the encrypted setup-data
+store the first time you run the setup/reconfigure flow and submit
+the form. On Music Assistant versions without setup-flow support,
+nothing changes at all: the stored settings values are used directly.
 
 ## Architecture / file map
 
@@ -162,7 +174,11 @@ lifx_lights_sync/
 ├── __init__.py      Plugin entry point; setup() lazily imports the
 │                    provider (exact installed Hue pattern).
 ├── manifest.json    Plugin manifest (domain, deps, requirements).
-├── strings.json     Config entry labels/help for the MA UI.
+├── strings.json     Config entry labels/help and setup-flow text
+│                    for the MA UI.
+├── setup_flow.py    Interactive setup flow: collects the optional
+│                    direct HA URL + token into MA's encrypted
+│                    setup-data store (hass provider pattern).
 ├── icon.svg / icon_dark.svg
 ├── constants.py     Config keys, defaults, mode names, visualizer request.
 ├── settings.py      Typed, defensive config readers (safe fallbacks).
@@ -172,8 +188,8 @@ lifx_lights_sync/
 ├── discovery.py     HA registries + config entries, LAN discovery
 │                    (lifx-async), serial normalization, target merge.
 ├── ha_via_mass.py   HA discovery via MA's own hass provider
-│                    (registries + config_entries/get over its
-│                    existing connection; duck-typed, no MA imports).
+│                    (registries only, via the provider's public
+│                    methods; duck-typed, no MA imports).
 ├── lifx_output.py   LifxSender: snapshot / restore / rate-limited
 │                    bulb and matrix writes via lifx-async.
 ├── bridge.py        Sendspin bridge manager + per-target bridge:

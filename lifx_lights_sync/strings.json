@@ -1,1 +1,54 @@
-{"config_entries":{"brightness":{"description":"Upper bound: brightness of the effect peaks, in percent.","label":"Brightness (%)"},"brightness_floor":{"description":"Lower bound: resting brightness between hits, in percent. 0 keeps each mode's built-in rest level.","label":"Brightness floor (%)"},"color_mode":{"description":"Visualizer style applied to the lights: Smooth, Ambient, Flashing, Energetic or Bass (low-end thumps only).","label":"Color mode"},"discovery_source":{"description":"Auto first tries Music Assistant's own Home Assistant provider (no extra credentials needed), then a direct Home Assistant URL + token if configured, and uses the LAN as fallback/gap-filler. 'Home Assistant provider' uses only that provider; 'Home Assistant (direct)' uses only the URL + token below (LAN fills IP gaps in both HA modes); LAN ignores Home Assistant entirely.","label":"Discovery source"},"ha_token":{"description":"Long-lived access token from Home Assistant (profile -> Security). Used read-only to list LIFX devices, entities, areas and config entries. Only needed when Music Assistant's Home Assistant provider is not configured.","label":"Home Assistant long-lived access token"},"ha_url":{"description":"Base URL of your Home Assistant instance, e.g. http://homeassistant.local:8123. Only needed when Music Assistant's Home Assistant provider is not configured — with that provider, no HA credentials are entered in this plugin at all.","label":"Home Assistant URL"},"latency_ms":{"description":"Shift the visualizer render time to compensate for speaker or network latency.","label":"Latency compensation (ms)"},"send_rate_hz":{"description":"Rate limit for color updates sent to each individual LIFX light.","label":"Max sends per second (per light)"},"debug_frame_log":{"label":"Debug frame log","description":"Log one FRAMELOG line per second per streaming target with the mean/max brightness actually commanded to the lights (plus the Bass-mode band level). For diagnosing sync behavior from the server log; leave off in normal use."}},"manifest":{"description":"Sync LIFX lights to music using the Sendspin visualizer: each Home Assistant area (or single matrix/ceiling light) becomes a virtual LIGHT player that reacts to the music in real time."}}
+{
+  "config_entries": {
+    "brightness": {
+      "description": "Upper bound: brightness of the effect peaks, in percent.",
+      "label": "Brightness (%)"
+    },
+    "brightness_floor": {
+      "description": "Lower bound: resting brightness between hits, in percent. 0 keeps each mode's built-in rest level.",
+      "label": "Brightness floor (%)"
+    },
+    "color_mode": {
+      "description": "Visualizer style applied to the lights: Smooth, Ambient, Flashing, Energetic or Bass (low-end thumps only).",
+      "label": "Color mode"
+    },
+    "discovery_source": {
+      "description": "Auto first tries Music Assistant's own Home Assistant provider (no extra credentials needed), then a direct Home Assistant connection if one was configured in the setup flow, and uses the LAN as fallback/gap-filler. 'Home Assistant provider' uses only that provider; 'Home Assistant (direct)' uses only the setup-flow connection (LAN fills IP gaps in both HA modes); LAN ignores Home Assistant entirely.",
+      "label": "Discovery source"
+    },
+    "ha_token": {
+      "description": "Long-lived access token from Home Assistant (profile -> Security). Collected by the setup flow, stored encrypted, and used read-only to list LIFX devices, entities, areas and config entries. Only needed when Music Assistant's Home Assistant provider is not configured.",
+      "label": "Home Assistant long-lived access token"
+    },
+    "ha_url": {
+      "description": "Base URL of your Home Assistant instance, e.g. http://homeassistant.local:8123. Collected by the setup flow and only needed when Music Assistant's Home Assistant provider is not configured - with that provider, no HA credentials are entered in this plugin at all.",
+      "label": "Home Assistant URL"
+    },
+    "latency_ms": {
+      "description": "Shift the visualizer render time to compensate for speaker or network latency.",
+      "label": "Latency compensation (ms)"
+    },
+    "send_rate_hz": {
+      "description": "Rate limit for color updates sent to each individual LIFX light.",
+      "label": "Max sends per second (per light)"
+    },
+    "debug_frame_log": {
+      "label": "Debug frame log",
+      "description": "Log one FRAMELOG line per second per streaming target with the mean/max brightness actually commanded to the lights (plus the Bass-mode band level). For diagnosing sync behavior from the server log; leave off in normal use."
+    }
+  },
+  "manifest": {
+    "description": "Sync LIFX lights to music using the Sendspin visualizer: each Home Assistant area (or single matrix/ceiling light) becomes a virtual LIGHT player that reacts to the music in real time."
+  },
+  "setup_flow": {
+    "user": {
+      "title": "Direct Home Assistant connection (optional)",
+      "description": "If Music Assistant's Home Assistant provider is configured, leave both fields empty - discovery borrows its connection. Only enter a Home Assistant URL and long-lived access token to use a direct connection instead. The token is stored encrypted. On reconfigure, leave the token empty to keep the previously stored one."
+    }
+  },
+  "errors": {
+    "ha_url_required": "Enter the Home Assistant URL, or clear the token to skip the direct connection.",
+    "ha_token_required": "Enter a long-lived access token, or clear the URL to skip the direct connection.",
+    "ha_connection_failed": "Could not connect to Home Assistant with these details. Check the URL and token and try again."
+  }
+}

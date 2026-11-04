@@ -16,7 +16,7 @@
     "requirements": [
         "lifx-async==8.0.0"
     ],
-    "stage": "beta",
+    "stage": "alpha",
     "type": "plugin",
     "version": "0.1.0"
 }

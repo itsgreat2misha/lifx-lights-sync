@@ -16,7 +16,7 @@ has no Music Assistant imports and is unit-testable in isolation.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from . import constants as const
@@ -43,6 +43,23 @@ def _as_int(value: Any, default: int, minimum: int, maximum: int) -> int:
 def _as_choice(value: Any, choices: tuple[str, ...], default: str) -> str:
     text = _as_str(value).lower()
     return text if text in choices else default
+
+
+def validate_ha_credential_pair(ha_url: str, ha_token: str) -> str | None:
+    """
+    Validate that a direct Home Assistant URL/token pair is complete.
+
+    Both empty is valid (no direct connection configured); exactly one
+    of the two is not. Returns a strings.json error slug for the
+    incomplete case, or None when the pair is usable. Kept pure (no
+    Music Assistant imports) so the setup flow and the tests can both
+    use it.
+    """
+    if ha_token and not ha_url:
+        return "ha_url_required"
+    if ha_url and not ha_token:
+        return "ha_token_required"
+    return None
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:
@@ -130,6 +147,32 @@ def get_debug_frame_log(config: ProviderConfig) -> bool:
         config.get_value(const.CONF_DEBUG_FRAME_LOG),
         const.DEFAULT_DEBUG_FRAME_LOG,
     )
+
+
+def resolve_ha_credentials(
+    base: PluginSettings, setup_url: Any, setup_token: Any
+) -> PluginSettings:
+    """
+    Overlay setup-flow credentials onto config-derived settings.
+
+    ``setup_url``/``setup_token`` are the values from the provider's
+    ``setup_data`` (via ``get_setup_value``); a value that is not None
+    wins over the config-derived one, including an empty string (the
+    user cleared the credential in the setup flow). None means the
+    setup flow never ran, so the legacy config value - entered in the
+    options form by installs that predate the setup flow - is kept.
+    """
+    if setup_url is None and setup_token is None:
+        return base
+    ha_url = base.ha_url
+    if setup_url is not None:
+        # An explicit empty string clears the credential; it must not
+        # fall back to the config value the way a missing value does.
+        ha_url = _as_str(setup_url).rstrip("/")
+    ha_token = base.ha_token
+    if setup_token is not None:
+        ha_token = _as_str(setup_token)
+    return replace(base, ha_url=ha_url, ha_token=ha_token)
 
 
 # -- Bundled settings object -------------------------------------------------
@@ -247,4 +290,6 @@ __all__ = [
     "get_ha_url",
     "get_latency_ms",
     "get_send_rate_hz",
+    "resolve_ha_credentials",
+    "validate_ha_credential_pair",
 ]
