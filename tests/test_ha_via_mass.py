@@ -49,34 +49,25 @@ ENTITIES = {
     ),
 }
 AREAS = {"kitchen": {"area_id": "kitchen", "name": "Kitchen", "aliases": []}}
-ENTRIES = [
-    {
-        "domain": "lifx",
-        "data": {"host": "192.0.2.191", "serial": SERIAL},
-        "unique_id": SERIAL,
-    },
-    {"domain": "hue", "data": {"host": "10.0.0.9"}, "unique_id": "hue-bridge"},
-    {"domain": "lifx", "data": {"serial": "d073d5000000"}, "unique_id": "x"},
-]
 
 
 class FakeHassClient:
-    """Duck-typed stand-in for hass_client's HomeAssistantClient."""
+    """
+    Duck-typed stand-in for hass_client's HomeAssistantClient.
+
+    The via-MA path must only use the provider's public registry
+    methods, so ``send_command`` records any call and raises: a raw
+    WebSocket command from this module is a regression.
+    """
 
     connected = True
 
-    def __init__(self, entries=ENTRIES, fail=False):
-        self._entries = entries
-        self._fail = fail
+    def __init__(self):
         self.commands = []
 
     async def send_command(self, command, **kwargs):
         self.commands.append(command)
-        if self._fail:
-            raise RuntimeError("connection lost")
-        if command == "config_entries/get":
-            return self._entries
-        raise AssertionError(f"unexpected command {command}")
+        raise AssertionError(f"via-MA discovery must not send raw commands: {command}")
 
 
 class FakeHassProvider:
@@ -101,29 +92,24 @@ class FakeHassProvider:
 
 
 class TestFetchViaHassProvider(unittest.IsolatedAsyncioTestCase):
-    async def test_lifx_light_with_host_from_config_entries(self):
+    async def test_lifx_light_from_registries_without_config_entries(self):
         provider = FakeHassProvider()
         lights = await fetch_ha_via_hass_provider(provider)
         self.assertEqual(len(lights), 1)
         light = lights[0]
         self.assertEqual(light.serial, SERIAL)
-        # Host picked up from the send_command("config_entries/get") result.
-        self.assertEqual(light.host, "192.0.2.191")
+        # No host on this path: HA entry hosts are not exposed through
+        # the hass provider's public methods, so IPs come from LAN /
+        # sweep at merge time. And no raw commands may be sent at all.
+        self.assertIsNone(light.host)
         self.assertEqual(light.area_name, "Kitchen")
         self.assertEqual(light.entity_ids, ("light.kitchen_ceiling",))
-        self.assertEqual(provider.hass.commands, ["config_entries/get"])
+        self.assertEqual(provider.hass.commands, [])
 
-    async def test_non_lifx_entries_and_devices_filtered(self):
+    async def test_non_lifx_devices_filtered(self):
         lights = await fetch_ha_via_hass_provider(FakeHassProvider())
         serials = [light.serial for light in lights]
-        self.assertNotIn("d073d5000000", serials)  # entry without host
         self.assertEqual(serials, [SERIAL])  # Hue device excluded
-
-    async def test_config_entries_failure_is_non_fatal(self):
-        provider = FakeHassProvider(client=FakeHassClient(fail=True))
-        lights = await fetch_ha_via_hass_provider(provider)
-        self.assertEqual(len(lights), 1)
-        self.assertIsNone(lights[0].host)
 
     async def test_registry_failure_raises_discovery_error(self):
         provider = FakeHassProvider(fail_registries=True)
@@ -169,7 +155,7 @@ class TestFetchViaHassProvider(unittest.IsolatedAsyncioTestCase):
 
         lights = await fetch_ha_via_hass_provider(DictProvider())
         self.assertEqual(len(lights), 1)
-        self.assertEqual(lights[0].host, "192.0.2.191")
+        self.assertIsNone(lights[0].host)
 
 
 if __name__ == "__main__":
