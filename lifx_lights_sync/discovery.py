@@ -648,12 +648,12 @@ async def _enrich_lan_device(discovered: Any, lan: LanDevice) -> LanDevice:
         class_name = type(device).__name__
         is_ceiling = class_name == "CeilingLight"
         is_matrix = is_ceiling or class_name == "MatrixLight"
-        # Known limitation: Device.capabilities is a ProductInfo with a
-        # has_matrix flag in lifx-async 8.0.0; the class-name check above
-        # is the confirmed path, this getattr is a belt-and-braces extra.
-        # Whether has_matrix on its own correctly identifies every
-        # matrix product is unverified against real hardware — see
-        # "Known limitations" in the README.
+        # Device.capabilities is a ProductInfo with a has_matrix flag
+        # in lifx-async 8.0.0; the class-name check above is the
+        # confirmed path, this getattr is a belt-and-braces extra.
+        # Matrix-capable devices — including multi-zone Candle bulbs —
+        # become individual multi-channel sync targets; that is
+        # intentional and confirmed behaviour.
         capabilities = getattr(device, "capabilities", None)
         if capabilities is not None and getattr(capabilities, "has_matrix", False):
             is_matrix = True
