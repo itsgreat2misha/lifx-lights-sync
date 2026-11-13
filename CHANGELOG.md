@@ -61,6 +61,12 @@ everything after the initial commit is recorded under `[Unreleased]`.
 
 ### Fixed
 
+- README corrections: the status note and Development commands now
+  match the current state — the provider runs against upstream
+  Music Assistant `dev` and the test suite runs under pytest — and
+  the Known limitations section, whose entries (matrix
+  classification, upstream alignment) no longer apply, was removed
+  (2026-11-13).
 - Lights silently doing nothing: typed LIFX light/matrix/ceiling
   devices are now created instead of the base device type returned
   by IP lookup, which has no color methods (2026-11-02).

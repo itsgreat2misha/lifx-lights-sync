@@ -1,11 +1,11 @@
 # LIFX Lights Sync
 
 > **Status: alpha, live-tested on the maintainer's own Music Assistant
-> install** with real LIFX lights (end-to-end streaming verified
-> there). It has not yet been run against upstream Music Assistant
-> `dev` builds or other people's installs, and it is not yet part of
-> Music Assistant itself — treat other setups as untested. The pure
-> modules (discovery, color, analyzer) are unit-tested.
+> install** with real LIFX lights (end-to-end streaming runs there).
+> The provider runs against upstream Music Assistant `dev`
+> (aiosendspin 10.3.0, music-assistant-models 1.1.238), and its test
+> suite passes under upstream pytest. It is not yet part of Music
+> Assistant itself, and other people's installs are untested.
 
 A Music Assistant **plugin** that makes your LIFX lights react to
 whatever is playing — colors and brightness driven by the music, the
@@ -197,7 +197,7 @@ lifx_lights_sync/
 │                    50 Hz render loop, 2 s debounced stop.
 └── provider.py      PluginProvider: config entries, loaded_in_mass,
                      update_config, unload.
-tests/               stdlib unittest tests for the pure modules.
+tests/               pytest tests for the pure modules.
 ```
 
 The render loop is deliberately split: `analyzer.py` knows nothing
@@ -209,8 +209,10 @@ what keeps the core testable without a running Music Assistant.
 
 ```bash
 # From the repo root (no Music Assistant, lifx-async, aiohttp or numpy
-# needed — the pure modules and the test suite are dependency-free):
-python3 -m unittest discover -s tests -v
+# needed — the pure modules are dependency-free; the test suite runs
+# under pytest, with the same test dependencies CI installs):
+pip install pytest==9.1.1 pytest-aiohttp==1.1.1 pytest-asyncio==1.5.0
+python3 -m pytest tests -v
 python3 -m compileall lifx_lights_sync tests
 python3 -m json.tool lifx_lights_sync/manifest.json > /dev/null
 python3 -m json.tool lifx_lights_sync/strings.json > /dev/null
@@ -230,22 +232,6 @@ Lint and type checks mirror Music Assistant's own tooling
 ```bash
 pip install pre-commit && pre-commit run --all-files
 ```
-
-## Known limitations
-
-- **Matrix classification is partly unverified.** A LAN-discovered
-  device is treated as a matrix light when its lifx-async class is
-  `MatrixLight`/`CeilingLight` (confirmed path) *or* when its
-  reported capabilities carry a `has_matrix` flag (a belt-and-braces
-  extra). Whether the `has_matrix` flag on its own correctly
-  identifies every matrix product — and never misfires on ordinary
-  bulbs — has not been verified against the full range of real
-  hardware; a false positive would give a bulb its own multi-channel
-  matrix target instead of treating it as a single light.
-- **Upstream drift.** The bridge/provider API surface is aligned to
-  the Music Assistant / aiosendspin versions the maintainer runs;
-  newer upstream builds may restructure the provider APIs this
-  plugin builds on.
 
 ## Troubleshooting
 
