@@ -1,16 +1,15 @@
 # Tooling configuration, mirroring the Music Assistant server repo's
-# ruff/mypy setup (pyproject.toml there, fetched 2026-11-03) so this
+# ruff/mypy setup (pyproject.toml there, fetched 2026-11-13) so this
 # provider stays close to upstream style: line length 100, ruff
 # select = ALL with upstream's ignore list, pep257 docstrings with
 # D213, and strict mypy with missing imports ignored (Music Assistant
 # and lifx-async are only present inside a running MA instance).
+# Tool pins match upstream: ruff 0.16.5, mypy 2.3.0, target py314.
 # Deviations from upstream are marked inline.
 
 [tool.ruff]
 line-length = 100
-# Upstream targets py314; this repo's test environment is 3.12 and the
-# code intentionally stays 3.12-compatible.
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -74,21 +73,15 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # tests use wildcard addresses, made-up tokens and passwords as fixtures
-"tests/**" = [
-  "S104",
-  "S105",
-  # the suite is stdlib unittest by design (dependency-free), so the
-  # pytest-style and test-docstring rules do not apply
-  "PT009",
-  "PT027",
-  "D101",
-  "D102",
-  "D103",
-  "D107",
-  "ANN201",
-  "INP001",
-  "PLC0415",
-]
+# (same exemption as upstream's pyproject)
+"tests/**" = ["S104", "S105"]
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [tool.ruff.lint.pydocstyle]
 # Use Sphinx-style docstrings with :param: syntax
@@ -113,7 +106,7 @@ line-ending = "lf"
 
 [tool.mypy]
 platform = "linux"
-python_version = "3.12"
+python_version = "3.14"
 files = "lifx_lights_sync"
 follow_imports = "normal"
 # suppress errors about unsatisfied imports (MA / lifx-async / aiosendspin
@@ -150,8 +143,17 @@ warn_redundant_casts = true
 warn_return_any = true
 warn_unreachable = true
 warn_unused_configs = true
-warn_unused_ignores = true
+# Upstream sets warn_unused_ignores = true; disabled here because MA and
+# lifx-async are absent outside a running MA instance (see
+# ignore_missing_imports above), so the coded type: ignore comments that
+# guard real upstream-env errors would report as unused locally and in CI.
+warn_unused_ignores = false
 # Upstream also sets disallow_subclassing_any; it is not set here
 # because bridge.py / provider.py subclass Music Assistant classes
 # that only exist inside a running MA instance and resolve to Any
 # when their imports are missing.
+
+[tool.codespell]
+# Mirrors upstream's codespell config: "hass" is the Home Assistant
+# provider's domain name, not a typo.
+ignore-words-list = "hass"

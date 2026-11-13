@@ -77,7 +77,7 @@ def _coerce_rgb(value: Any) -> RGB | None:
     Best-effort conversion of a server color value to an RGB tuple.
 
     Accepts dicts with red/green/blue or r/g/b keys, 3-sequences, and
-    ``#rrggbb`` / ``rrggbb`` hex strings. Returns None when unparseable.
+    ``#rrggbb`` / ``rrggbb`` hex strings. Returns None when it cannot be parsed.
     """
     if value is None:
         return None
@@ -85,7 +85,7 @@ def _coerce_rgb(value: Any) -> RGB | None:
         keys = ("red", "green", "blue") if "red" in value else ("r", "g", "b")
         try:
             return tuple(round(float(value[key])) for key in keys)  # type: ignore[return-value]
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             return None
     if isinstance(value, str):
         text = value.strip().lstrip("#")
@@ -102,7 +102,7 @@ def _coerce_rgb(value: Any) -> RGB | None:
     if isinstance(value, Sequence) and len(value) == 3:
         try:
             return tuple(round(float(channel)) for channel in value)  # type: ignore[return-value]
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
     return None
 

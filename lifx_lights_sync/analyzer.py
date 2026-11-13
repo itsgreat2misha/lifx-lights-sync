@@ -321,30 +321,10 @@ class LifxAudioAnalyzer:
         """Set the absolute resting-brightness floor (0.0-1.0)."""
         self._brightness_floor = clamp(float(brightness_floor))
 
-    def _effective_channel_floor(self) -> float:
-        """
-        Channel multiplier floor, honoring the user's lower bound.
-
-        When a brightness floor is configured it replaces the mode's
-        built-in floor: the floor is an absolute output level, so as a
-        multiplier it is floor / brightness (capped below the max).
-        """
-        preset = self._preset
-        if self._brightness_floor > 0.0 and self._brightness > 0.0:
-            return min(
-                self._brightness_floor / self._brightness,
-                preset.channel_max - 0.01,
-            )
-        return preset.channel_floor
-
     def set_palette(self, palette: Sequence[RGB]) -> None:
         """Replace the color palette (empty input keeps the current one)."""
         if palette:
             self._palette = [(r / 255.0, g / 255.0, b / 255.0) for r, g, b in palette]
-
-    @property
-    def _preset(self) -> ModePreset:
-        return MODE_PRESETS[self._mode]
 
     # -- inputs ------------------------------------------------------------
 
@@ -415,6 +395,68 @@ class LifxAudioAnalyzer:
         self._bass_swing = 0.0
         self._pump_baseline = 0.0
         self._bass_level = 0.0
+
+    # -- rendering -----------------------------------------------------------
+
+    def render(self, now_us: int) -> list[LightColorCommand]:
+        """Render one command per channel for the given timestamp."""
+        now_us = int(now_us)
+        if not self._channels:
+            return []
+        self._prune_beats(now_us)
+        self._advance_spectrum(now_us)
+        channel_mults = self._channel_multipliers()
+        peak_factor = self._consume_peaks(now_us) * self._preset.onset_boost
+        if peak_factor > 0.0:
+            channel_mults = [min(1.0, m + peak_factor) for m in channel_mults]
+        bass_factor = self._preset.bass_brightness_scale * self._bass_swing
+        if bass_factor > 0.0:
+            channel_mults = [min(1.0, m + bass_factor) for m in channel_mults]
+
+        prior, next_beat, segment = self._current_segment(now_us)
+        if prior is None or next_beat is None or segment is None:
+            colors = self._peak_walk_colors(now_us)
+            brightness = self._brightness
+        else:
+            pulse = self._compute_pulse(now_us, prior, next_beat, segment)
+            colors = self._per_channel_colors(prior, next_beat, now_us, segment)
+            brightness = self._brightness * pulse
+
+        commands: list[LightColorCommand] = []
+        for i, channel in enumerate(self._channels):
+            scale = brightness * channel_mults[i]
+            r, g, b = colors[i]
+            commands.append(
+                LightColorCommand(
+                    channel.channel_id,
+                    (
+                        round(clamp(r * scale) * 255),
+                        round(clamp(g * scale) * 255),
+                        round(clamp(b * scale) * 255),
+                    ),
+                )
+            )
+        return commands
+
+    def _effective_channel_floor(self) -> float:
+        """
+        Channel multiplier floor, honoring the user's lower bound.
+
+        When a brightness floor is configured it replaces the mode's
+        built-in floor: the floor is an absolute output level, so as a
+        multiplier it is floor / brightness (capped below the max).
+        """
+        preset = self._preset
+        if self._brightness_floor > 0.0 and self._brightness > 0.0:
+            return min(
+                self._brightness_floor / self._brightness,
+                preset.channel_max - 0.01,
+            )
+        return preset.channel_floor
+
+    @property
+    def _preset(self) -> ModePreset:
+        return MODE_PRESETS[self._mode]
 
     # -- promotion / consumption ------------------------------------------
 
@@ -654,48 +696,6 @@ class LifxAudioAnalyzer:
             )
             for channel in self._channels
         ]
-
-    # -- rendering -----------------------------------------------------------
-
-    def render(self, now_us: int) -> list[LightColorCommand]:
-        """Render one command per channel for the given timestamp."""
-        now_us = int(now_us)
-        if not self._channels:
-            return []
-        self._prune_beats(now_us)
-        self._advance_spectrum(now_us)
-        channel_mults = self._channel_multipliers()
-        peak_factor = self._consume_peaks(now_us) * self._preset.onset_boost
-        if peak_factor > 0.0:
-            channel_mults = [min(1.0, m + peak_factor) for m in channel_mults]
-        bass_factor = self._preset.bass_brightness_scale * self._bass_swing
-        if bass_factor > 0.0:
-            channel_mults = [min(1.0, m + bass_factor) for m in channel_mults]
-
-        prior, next_beat, segment = self._current_segment(now_us)
-        if prior is None or next_beat is None or segment is None:
-            colors = self._peak_walk_colors(now_us)
-            brightness = self._brightness
-        else:
-            pulse = self._compute_pulse(now_us, prior, next_beat, segment)
-            colors = self._per_channel_colors(prior, next_beat, now_us, segment)
-            brightness = self._brightness * pulse
-
-        commands: list[LightColorCommand] = []
-        for i, channel in enumerate(self._channels):
-            scale = brightness * channel_mults[i]
-            r, g, b = colors[i]
-            commands.append(
-                LightColorCommand(
-                    channel.channel_id,
-                    (
-                        round(clamp(r * scale) * 255),
-                        round(clamp(g * scale) * 255),
-                        round(clamp(b * scale) * 255),
-                    ),
-                )
-            )
-        return commands
 
 
 def _lerp(

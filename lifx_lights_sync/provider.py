@@ -103,28 +103,6 @@ class LifxLightsSyncProvider(PluginProvider):
         """Return the current resolved plugin settings."""
         return self._settings
 
-    def _resolved_settings(self, config: ProviderConfig) -> PluginSettings:
-        """
-        Build settings from a config, overlaying setup-flow credentials.
-
-        The direct Home Assistant URL/token are collected by the setup
-        flow and stored as ``setup_data``; on servers that support it
-        they are read via ``get_setup_value`` (which itself falls back
-        to the stored config values, so installs that entered the
-        credentials in the old options form keep working untouched).
-        On older servers without ``get_setup_value``, the config values
-        are used as-is.
-        """
-        settings = PluginSettings.from_config(config)
-        get_setup_value = getattr(self, "get_setup_value", None)
-        if not callable(get_setup_value):
-            return settings
-        return resolve_ha_credentials(
-            settings,
-            get_setup_value(const.CONF_HA_URL, None),
-            get_setup_value(const.CONF_HA_TOKEN, None),
-        )
-
     async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
         """
         Return the (options) config entries for the LIFX Lights Sync provider.
@@ -214,6 +192,64 @@ class LifxLightsSyncProvider(PluginProvider):
             # guaranteed); retry once it appears instead of staying
             # LAN-only until the next restart.
             self._rediscovery_task = self.mass.create_task(self._delayed_rediscovery())
+
+    async def unload(self, is_removed: bool = False) -> None:
+        """Handle unload/close of the provider."""
+        if self._rediscovery_task and not self._rediscovery_task.done():
+            self._rediscovery_task.cancel()
+            self._rediscovery_task = None
+        if self._bridge_manager:
+            await self._bridge_manager.stop_all()
+            self._bridge_manager = None
+        for device in self._devices.values():
+            try:
+                await device.close()
+            except Exception:
+                self.logger.debug("Error closing LIFX device", exc_info=True)
+        self._devices = {}
+
+    async def update_config(self, config: ProviderConfig, changed_keys: set[str]) -> None:
+        """
+        Handle config changes.
+
+        Playback settings (brightness, brightness floor, color mode,
+        latency, send rate, debug frame log) are applied to the
+        running bridges in place; anything else (discovery source, HA
+        connection, log level) goes through the base implementation,
+        which reloads the provider.
+        """
+        # changed_keys arrive namespaced as 'values/<key>'; only skip
+        # the reload when every changed key can be applied in place.
+        settings_keys = {f"values/{key}" for key in _LIVE_SETTING_KEYS}
+        if changed_keys and changed_keys <= settings_keys and self._bridge_manager:
+            self._settings = self._resolved_settings(config)
+            self._bridge_manager.update_settings(self._settings)
+            self.config = config
+            return
+
+        await super().update_config(config, changed_keys)
+
+    def _resolved_settings(self, config: ProviderConfig) -> PluginSettings:
+        """
+        Build settings from a config, overlaying setup-flow credentials.
+
+        The direct Home Assistant URL/token are collected by the setup
+        flow and stored as ``setup_data``; on servers that support it
+        they are read via ``get_setup_value`` (which itself falls back
+        to the stored config values, so installs that entered the
+        credentials in the old options form keep working untouched).
+        On older servers without ``get_setup_value``, the config values
+        are used as-is.
+        """
+        settings = PluginSettings.from_config(config)
+        get_setup_value = getattr(self, "get_setup_value", None)
+        if not callable(get_setup_value):
+            return settings
+        return resolve_ha_credentials(
+            settings,
+            get_setup_value(const.CONF_HA_URL, None),
+            get_setup_value(const.CONF_HA_TOKEN, None),
+        )
 
     async def _delayed_rediscovery(self) -> None:
         """Re-run discovery once MA's hass provider is available."""
@@ -377,42 +413,6 @@ class LifxLightsSyncProvider(PluginProvider):
             len(lights),
         )
         return lights, "Music Assistant's Home Assistant provider"
-
-    async def unload(self, is_removed: bool = False) -> None:
-        """Handle unload/close of the provider."""
-        if self._rediscovery_task and not self._rediscovery_task.done():
-            self._rediscovery_task.cancel()
-            self._rediscovery_task = None
-        if self._bridge_manager:
-            await self._bridge_manager.stop_all()
-            self._bridge_manager = None
-        for device in self._devices.values():
-            try:
-                await device.close()
-            except Exception:
-                self.logger.debug("Error closing LIFX device", exc_info=True)
-        self._devices = {}
-
-    async def update_config(self, config: ProviderConfig, changed_keys: set[str]) -> None:
-        """
-        Handle config changes.
-
-        Playback settings (brightness, brightness floor, color mode,
-        latency, send rate, debug frame log) are applied to the
-        running bridges in place; anything else (discovery source, HA
-        connection, log level) goes through the base implementation,
-        which reloads the provider.
-        """
-        # changed_keys arrive namespaced as 'values/<key>'; only skip
-        # the reload when every changed key can be applied in place.
-        settings_keys = {f"values/{key}" for key in _LIVE_SETTING_KEYS}
-        if changed_keys and changed_keys <= settings_keys and self._bridge_manager:
-            self._settings = self._resolved_settings(config)
-            self._bridge_manager.update_settings(self._settings)
-            self.config = config
-            return
-
-        await super().update_config(config, changed_keys)
 
 
 __all__ = ["LifxLightsSyncProvider"]

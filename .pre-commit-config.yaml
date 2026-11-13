@@ -2,16 +2,16 @@
 # (ruff check + ruff format + mypy, plus basic file checks). Upstream
 # runs the tools through its own environment scripts; this standalone
 # repo uses the public hook repos with the same tool settings from
-# pyproject.toml.
+# pyproject.toml. Tool versions are pinned to upstream's (2026-11-13).
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.3
+    rev: v0.16.5
     hooks:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.4.1
+    rev: v2.3.0
     hooks:
       - id: mypy
         pass_filenames: false

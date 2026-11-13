@@ -7,6 +7,8 @@ imported (and unit-tested) outside a running Music Assistant instance.
 
 from __future__ import annotations
 
+from typing import Final
+
 DOMAIN = "lifx_lights_sync"
 
 # --- Config entry keys (mirror the Hue Lights Sync plugin's naming style) ---
@@ -62,7 +64,7 @@ COLOR_MODES = (MODE_SMOOTH, MODE_AMBIENT, MODE_FLASHING, MODE_ENERGETIC, MODE_BA
 VISUALIZER_RATE_MAX = 20  # frames per second requested from the server
 VISUALIZER_TYPES = ("beat", "peak", "spectrum")
 SPECTRUM_N_DISP_BINS = 17
-SPECTRUM_SCALE = "mel"
+SPECTRUM_SCALE: Final = "mel"
 SPECTRUM_F_MIN = 20
 SPECTRUM_F_MAX = 20_000
 VISUALIZER_BUFFER_CAPACITY = 2048

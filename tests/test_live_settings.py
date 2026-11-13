@@ -9,12 +9,10 @@ forces a full provider reload instead of applying live. This is the
 exact bug that hid brightness_floor and debug_frame_log.
 """
 
-import ast
-import sys
-import unittest
-from pathlib import Path
+from __future__ import annotations
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import ast
+from pathlib import Path
 
 from lifx_lights_sync import constants as const
 from lifx_lights_sync.settings import PluginSettings
@@ -45,6 +43,8 @@ def _live_setting_key_names() -> set[str]:
             isinstance(target, ast.Name) and target.id == "_LIVE_SETTING_KEYS"
             for target in node.targets
         ):
+            if not isinstance(node.value, ast.Tuple):
+                continue
             return {
                 elt.attr
                 for elt in node.value.elts
@@ -55,22 +55,23 @@ def _live_setting_key_names() -> set[str]:
     raise AssertionError("_LIVE_SETTING_KEYS assignment not found in provider.py")
 
 
-class TestLiveSettingKeys(unittest.TestCase):
-    def test_all_live_appliable_keys_are_listed(self) -> None:
-        self.assertEqual(_live_setting_key_names(), EXPECTED_LIVE_KEYS)
+class TestLiveSettingKeys:
+    """Tests for Live Setting Keys."""
+
+    def test_all_live_applicable_keys_are_listed(self) -> None:
+        """All live applicable keys are listed."""
+        assert (_live_setting_key_names()) == (EXPECTED_LIVE_KEYS)
 
     def test_listed_names_exist_in_constants(self) -> None:
+        """Listed names exist in constants."""
         for name in _live_setting_key_names():
-            self.assertTrue(hasattr(const, name), name)
+            assert hasattr(const, name), name
 
     def test_floor_and_frame_log_settings_round_trip(self) -> None:
+        """Floor and frame log settings round trip."""
         settings = PluginSettings.from_mapping(
             {const.CONF_BRIGHTNESS_FLOOR: 25, const.CONF_DEBUG_FRAME_LOG: True}
         )
-        self.assertEqual(settings.brightness_floor_percent, 25)
-        self.assertEqual(settings.brightness_floor, 0.25)
-        self.assertTrue(settings.debug_frame_log)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert (settings.brightness_floor_percent) == (25)
+        assert (settings.brightness_floor) == (0.25)
+        assert settings.debug_frame_log
