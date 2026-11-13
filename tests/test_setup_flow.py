@@ -8,13 +8,11 @@ it relies on - credential pair validation and the setup-data overlay
 in settings.py - is pure and unit-tested directly here.
 """
 
+from __future__ import annotations
+
 import ast
 import json
-import sys
-import unittest
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lifx_lights_sync import constants as const
 from lifx_lights_sync.settings import (
@@ -29,100 +27,120 @@ PROVIDER_PY = PACKAGE_DIR / "provider.py"
 MANIFEST_JSON = PACKAGE_DIR / "manifest.json"
 
 
-class TestCredentialPairValidation(unittest.TestCase):
+class TestCredentialPairValidation:
+    """Tests for Credential Pair Validation."""
+
     def test_both_empty_is_valid(self) -> None:
         # No direct connection configured: rely on the hass provider / LAN.
-        self.assertIsNone(validate_ha_credential_pair("", ""))
+        """Both empty is valid."""
+        assert (validate_ha_credential_pair("", "")) is None
 
     def test_complete_pair_is_valid(self) -> None:
-        self.assertIsNone(validate_ha_credential_pair("http://homeassistant.local:8123", "token"))
+        """Complete pair is valid."""
+        assert (validate_ha_credential_pair("http://homeassistant.local:8123", "token")) is None
 
     def test_token_without_url(self) -> None:
-        self.assertEqual(validate_ha_credential_pair("", "token"), "ha_url_required")
+        """Token without url."""
+        assert (validate_ha_credential_pair("", "token")) == ("ha_url_required")
 
     def test_url_without_token(self) -> None:
-        self.assertEqual(
-            validate_ha_credential_pair("http://homeassistant.local:8123", ""),
-            "ha_token_required",
+        """Url without token."""
+        assert (validate_ha_credential_pair("http://homeassistant.local:8123", "")) == (
+            "ha_token_required"
         )
 
 
-class TestResolveHaCredentials(unittest.TestCase):
+class TestResolveHaCredentials:
+    """Tests for Resolve Ha Credentials."""
+
     def _base(self) -> PluginSettings:
+        """Build the base settings carrying legacy config credentials."""
         return PluginSettings.from_mapping(
             {const.CONF_HA_URL: "http://legacy.local:8123/", const.CONF_HA_TOKEN: "legacytoken"}
         )
 
     def test_no_setup_values_keeps_config(self) -> None:
         # Setup flow never ran: legacy options-form values are used as-is.
+        """No setup values keeps config."""
         settings = resolve_ha_credentials(self._base(), None, None)
-        self.assertEqual(settings.ha_url, "http://legacy.local:8123")
-        self.assertEqual(settings.ha_token, "legacytoken")
+        assert (settings.ha_url) == ("http://legacy.local:8123")
+        assert (settings.ha_token) == ("legacytoken")
 
     def test_setup_values_win(self) -> None:
+        """Setup values win."""
         settings = resolve_ha_credentials(self._base(), "http://new.local:8123/", "newtoken")
-        self.assertEqual(settings.ha_url, "http://new.local:8123")
-        self.assertEqual(settings.ha_token, "newtoken")
-        self.assertTrue(settings.ha_configured)
+        assert (settings.ha_url) == ("http://new.local:8123")
+        assert (settings.ha_token) == ("newtoken")
+        assert settings.ha_configured
 
     def test_setup_empty_string_clears(self) -> None:
         # Submitting the flow with empty fields clears the credentials.
+        """Setup empty string clears."""
         settings = resolve_ha_credentials(self._base(), "", "")
-        self.assertEqual(settings.ha_url, "")
-        self.assertEqual(settings.ha_token, "")
-        self.assertFalse(settings.ha_configured)
+        assert (settings.ha_url) == ("")
+        assert (settings.ha_token) == ("")
+        assert not (settings.ha_configured)
 
     def test_partial_setup_overlay(self) -> None:
+        """Partial setup overlay."""
         settings = resolve_ha_credentials(self._base(), "http://new.local:8123", None)
-        self.assertEqual(settings.ha_url, "http://new.local:8123")
-        self.assertEqual(settings.ha_token, "legacytoken")
+        assert (settings.ha_url) == ("http://new.local:8123")
+        assert (settings.ha_token) == ("legacytoken")
 
 
 def _module_source(path: Path) -> str:
+    """Read a module file and return its source text."""
     return path.read_text(encoding="utf-8")
 
 
 def _top_level_function_names(path: Path) -> set[str]:
+    """Top level function names."""
     tree = ast.parse(_module_source(path))
     return {
         node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
 
-class TestSetupFlowModule(unittest.TestCase):
+class TestSetupFlowModule:
+    """Tests for Setup Flow Module."""
+
     def test_run_setup_exists_and_is_async(self) -> None:
+        """Run setup exists and is async."""
         tree = ast.parse(_module_source(SETUP_FLOW_PY))
         funcs = {node.name: node for node in tree.body if isinstance(node, ast.AsyncFunctionDef)}
-        self.assertIn("run_setup", funcs)
+        assert ("run_setup") in (funcs)
 
     def test_flow_uses_session_form_and_finish(self) -> None:
+        """Flow uses session form and finish."""
         source = _module_source(SETUP_FLOW_PY)
-        self.assertIn("session.form(", source)
-        self.assertIn("session.finish(", source)
-        self.assertIn('step_id="user"', source)
+        assert ("session.form(") in (source)
+        assert ("session.finish(") in (source)
+        assert ('step_id="user"') in (source)
 
     def test_flow_collects_the_credential_keys(self) -> None:
+        """Flow collects the credential keys."""
         source = _module_source(SETUP_FLOW_PY)
-        self.assertIn("const.CONF_HA_URL", source)
-        self.assertIn("const.CONF_HA_TOKEN", source)
-        self.assertIn("ConfigEntryType.SECURE_STRING", source)
+        assert ("const.CONF_HA_URL") in (source)
+        assert ("const.CONF_HA_TOKEN") in (source)
+        assert ("ConfigEntryType.SECURE_STRING") in (source)
 
 
-class TestProviderShape(unittest.TestCase):
+class TestProviderShape:
+    """Tests for Provider Shape."""
+
     def test_credentials_no_longer_declared_as_options(self) -> None:
+        """Credentials no longer declared as options."""
         source = _module_source(PROVIDER_PY)
-        self.assertNotIn("key=const.CONF_HA_URL", source)
-        self.assertNotIn("key=const.CONF_HA_TOKEN", source)
+        assert ("key=const.CONF_HA_URL") not in (source)
+        assert ("key=const.CONF_HA_TOKEN") not in (source)
 
     def test_provider_reads_setup_values_with_fallback(self) -> None:
+        """Provider reads setup values with fallback."""
         source = _module_source(PROVIDER_PY)
-        self.assertIn("get_setup_value", source)
-        self.assertIn("resolve_ha_credentials", source)
+        assert ("get_setup_value") in (source)
+        assert ("resolve_ha_credentials") in (source)
 
     def test_manifest_stage_is_alpha(self) -> None:
+        """Manifest stage is alpha."""
         manifest = json.loads(MANIFEST_JSON.read_text(encoding="utf-8"))
-        self.assertEqual(manifest["stage"], "alpha")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert (manifest["stage"]) == ("alpha")

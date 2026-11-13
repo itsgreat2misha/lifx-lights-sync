@@ -546,7 +546,7 @@ async def fetch_ha_lifx_lights(
     try:
         async with (
             aiohttp.ClientSession() as session,
-            session.ws_connect(ws_url, timeout=timeout_s) as ws,
+            session.ws_connect(ws_url, timeout=aiohttp.ClientWSTimeout(ws_close=timeout_s)) as ws,
         ):
             greeting = await ws.receive_json(timeout=timeout_s)
             if greeting.get("type") != "auth_required":

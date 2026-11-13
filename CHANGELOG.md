@@ -6,9 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 This project is pre-1.0 and in alpha (the provider manifest carries
-`stage: alpha` and version `0.1.0`). There are no git tags or GitHub
-releases yet, so everything after the initial commit is recorded
-under `[Unreleased]`.
+`stage: alpha`). There are no git tags or GitHub releases yet, so
+everything after the initial commit is recorded under `[Unreleased]`.
 
 ## [Unreleased]
 
@@ -54,6 +53,11 @@ under `[Unreleased]`.
   unsupported `config_entries/get` call (2026-11-04).
 - Live-apply was fixed so the brightness floor and debug frame log
   settings take effect on running bridges (2026-11-04).
+- Tooling aligned to the Music Assistant upstream pins (ruff
+  0.16.5, mypy 2.3.0, Python 3.14 target): the test suite was
+  rewritten in pytest style, provider methods were reordered so
+  public methods precede private ones, and the provider manifest
+  no longer carries the non-standard `version` field (2026-11-13).
 
 ### Fixed
 

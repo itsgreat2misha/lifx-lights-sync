@@ -1,11 +1,10 @@
 """Unit tests for ha_via_mass: HA discovery via MA's hass provider."""
 
-import sys
-import unittest
-from pathlib import Path
-from typing import NamedTuple
+from __future__ import annotations
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from typing import Any, NamedTuple
+
+import pytest
 
 from lifx_lights_sync.discovery import HaDiscoveryError
 from lifx_lights_sync.ha_via_mass import fetch_ha_via_hass_provider
@@ -14,6 +13,8 @@ from lifx_lights_sync.ha_via_mass import fetch_ha_via_hass_provider
 # The hass provider's entity registry uses exactly this abbreviated
 # NamedTuple shape (platform/device_id/area_id), keyed by entity_id.
 class HassRegistryEntity(NamedTuple):
+    """Abbreviated hass entity-registry row, as returned by the provider."""
+
     platform: str
     device_id: str
     area_id: str | None
@@ -62,10 +63,12 @@ class FakeHassClient:
 
     connected = True
 
-    def __init__(self):
-        self.commands = []
+    def __init__(self) -> None:
+        """Initialise the fake with an empty command log."""
+        self.commands: list[str] = []
 
-    async def send_command(self, command, **kwargs):
+    async def send_command(self, command: str, **kwargs: Any) -> None:
+        """Record a raw command and fail: the via-MA path must never send one."""
         self.commands.append(command)
         raise AssertionError(f"via-MA discovery must not send raw commands: {command}")
 
@@ -75,72 +78,88 @@ class FakeHassProvider:
 
     available = True
 
-    def __init__(self, client=None, fail_registries=False):
+    def __init__(self, client: FakeHassClient | None = None, fail_registries: bool = False) -> None:
+        """Initialise the fake provider."""
         self.hass = client if client is not None else FakeHassClient()
         self._fail_registries = fail_registries
 
-    async def get_device_registry(self):
+    async def get_device_registry(self) -> Any:
+        """Return the fake device registry."""
         if self._fail_registries:
             raise RuntimeError("registry fetch failed")
         return DEVICES
 
-    async def get_entity_registry(self):
+    async def get_entity_registry(self) -> Any:
+        """Return the fake entity registry."""
         return ENTITIES
 
-    async def get_area_registry(self):
+    async def get_area_registry(self) -> Any:
+        """Return the fake area registry."""
         return AREAS
 
 
-class TestFetchViaHassProvider(unittest.IsolatedAsyncioTestCase):
-    async def test_lifx_light_from_registries_without_config_entries(self):
+class TestFetchViaHassProvider:
+    """Tests for Fetch Via Hass Provider."""
+
+    async def test_lifx_light_from_registries_without_config_entries(self) -> None:
+        """Lifx light from registries without config entries."""
         provider = FakeHassProvider()
         lights = await fetch_ha_via_hass_provider(provider)
-        self.assertEqual(len(lights), 1)
+        assert (len(lights)) == (1)
         light = lights[0]
-        self.assertEqual(light.serial, SERIAL)
+        assert (light.serial) == (SERIAL)
         # No host on this path: HA entry hosts are not exposed through
         # the hass provider's public methods, so IPs come from LAN /
         # sweep at merge time. And no raw commands may be sent at all.
-        self.assertIsNone(light.host)
-        self.assertEqual(light.area_name, "Kitchen")
-        self.assertEqual(light.entity_ids, ("light.kitchen_ceiling",))
-        self.assertEqual(provider.hass.commands, [])
+        assert (light.host) is None
+        assert (light.area_name) == ("Kitchen")
+        assert (light.entity_ids) == (("light.kitchen_ceiling",))
+        assert (provider.hass.commands) == ([])
 
-    async def test_non_lifx_devices_filtered(self):
+    async def test_non_lifx_devices_filtered(self) -> None:
+        """Non lifx devices filtered."""
         lights = await fetch_ha_via_hass_provider(FakeHassProvider())
         serials = [light.serial for light in lights]
-        self.assertEqual(serials, [SERIAL])  # Hue device excluded
+        assert (serials) == ([SERIAL])  # Hue device excluded
 
-    async def test_registry_failure_raises_discovery_error(self):
+    async def test_registry_failure_raises_discovery_error(self) -> None:
+        """Registry failure raises discovery error."""
         provider = FakeHassProvider(fail_registries=True)
-        with self.assertRaises(HaDiscoveryError):
+        with pytest.raises(HaDiscoveryError):
             await fetch_ha_via_hass_provider(provider)
 
-    async def test_none_provider_raises_discovery_error(self):
-        with self.assertRaises(HaDiscoveryError):
+    async def test_none_provider_raises_discovery_error(self) -> None:
+        """None provider raises discovery error."""
+        with pytest.raises(HaDiscoveryError):
             await fetch_ha_via_hass_provider(None)
 
-    async def test_unavailable_provider_raises_discovery_error(self):
+    async def test_unavailable_provider_raises_discovery_error(self) -> None:
+        """Unavailable provider raises discovery error."""
         provider = FakeHassProvider()
         provider.available = False
-        with self.assertRaises(HaDiscoveryError):
+        with pytest.raises(HaDiscoveryError):
             await fetch_ha_via_hass_provider(provider)
 
-    async def test_disconnected_client_raises_discovery_error(self):
+    async def test_disconnected_client_raises_discovery_error(self) -> None:
+        """Disconnected client raises discovery error."""
         client = FakeHassClient()
         client.connected = False
         provider = FakeHassProvider(client=client)
-        with self.assertRaises(HaDiscoveryError):
+        with pytest.raises(HaDiscoveryError):
             await fetch_ha_via_hass_provider(provider)
 
-    async def test_dict_rows_and_list_registries_accepted(self):
+    async def test_dict_rows_and_list_registries_accepted(self) -> None:
         """Adapter also accepts dict-shaped entities and list registries."""
 
         class DictProvider(FakeHassProvider):
-            async def get_device_registry(self):
+            """Fake provider returning dict-shaped entities and list registries."""
+
+            async def get_device_registry(self) -> Any:
+                """Return the fake device registry."""
                 return list(DEVICES.values())
 
-            async def get_entity_registry(self):
+            async def get_entity_registry(self) -> Any:
+                """Return the fake entity registry."""
                 return {
                     "light.kitchen_ceiling": {
                         "entity_id": "light.kitchen_ceiling",
@@ -150,13 +169,10 @@ class TestFetchViaHassProvider(unittest.IsolatedAsyncioTestCase):
                     }
                 }
 
-            async def get_area_registry(self):
+            async def get_area_registry(self) -> Any:
+                """Return the fake area registry."""
                 return [{"area_id": "kitchen", "name": "Kitchen"}]
 
         lights = await fetch_ha_via_hass_provider(DictProvider())
-        self.assertEqual(len(lights), 1)
-        self.assertIsNone(lights[0].host)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert (len(lights)) == (1)
+        assert (lights[0].host) is None

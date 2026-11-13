@@ -69,7 +69,7 @@ def _hsbk_components(color: Any) -> tuple[float, float, float, int] | None:
             float(color.brightness),
             int(color.kelvin),
         )
-    except (AttributeError, TypeError, ValueError):
+    except AttributeError, TypeError, ValueError:
         return None
 
 
@@ -200,7 +200,7 @@ async def open_devices(
                 if serial not in missing or serial in opened:
                     continue
                 try:
-                    device = await discovered.create_device()
+                    device = await discovered.create_device()  # type: ignore[no-untyped-call]
                 except Exception:
                     _LOGGER.warning("Could not create LIFX device %s", serial, exc_info=True)
                     continue
@@ -246,6 +246,115 @@ class LifxSender:
         self._min_interval = 1.0 / self._send_rate_hz
 
     @property
+    def target(self) -> SyncTarget:
+        """The sync target this sender writes to."""
+        return self._target
+
+    # -- snapshot / restore --------------------------------------------------
+
+    async def snapshot(self) -> None:
+        """Record the current state of every reachable target light."""
+        async with self._lock:
+            self._snapshots.clear()
+            for light in self._target.lights:
+                device = self._device(light.serial)
+                if device is None:
+                    continue
+                snapshot = DeviceSnapshot(serial=light.serial)
+                try:
+                    color, power, _label = await device.get_color()
+                    snapshot.color = _hsbk_components(color)
+                    snapshot.power = int(power)
+                except Exception:
+                    _LOGGER.warning("Snapshot color failed for %s", light.serial, exc_info=True)
+                if light.is_matrix:
+                    try:
+                        tiles = await device.get_all_tile_colors()
+                        if tiles:
+                            snapshot.zone_colors = [
+                                components
+                                for components in (_hsbk_components(zone) for zone in tiles[0])
+                                if components is not None
+                            ]
+                    except Exception:
+                        _LOGGER.debug("Snapshot zones failed for %s", light.serial, exc_info=True)
+                self._snapshots[light.serial] = snapshot
+
+    async def restore(self) -> None:
+        """Restore the snapshot taken by :meth:`snapshot` (best effort)."""
+        # Animators bypass the device color methods; close them so the
+        # awaited restore calls below own the device state again.
+        self._close_animators()
+        async with self._lock:
+            snapshots, self._snapshots = self._snapshots, {}
+            self._powered_on.clear()
+            self._last_frame.clear()
+        for serial, snapshot in snapshots.items():
+            device = self._device(serial)
+            if device is None:
+                continue
+            try:
+                if snapshot.zone_colors:
+                    await self._restore_zones(serial, device, snapshot)
+                elif snapshot.color is not None:
+                    await device.set_color(self._hsbk_from_components(snapshot.color))
+                if snapshot.power is not None:
+                    await device.set_power(bool(snapshot.power))
+            except Exception:
+                _LOGGER.debug("Restore failed for %s", serial, exc_info=True)
+
+    # -- sending ---------------------------------------------------------------
+
+    async def send(
+        self, commands: Sequence[LightColorCommand], target: SyncTarget | None = None
+    ) -> None:
+        """Apply one render's commands (rate-limited per device)."""
+        target = target or self._target
+        bulbs: dict[str, RGB] = {}
+        zones: dict[str, dict[int, RGB]] = {}
+        for command in commands:
+            serial, zone = _channel_serial_and_zone(command.channel_id)
+            if zone is None:
+                bulbs[serial] = command.rgb
+            else:
+                zones.setdefault(serial, {})[zone] = command.rgb
+
+        for serial, rgb in bulbs.items():
+            device = self._device(serial)
+            if device is None or self._rate_limited(serial, self._bulb_interval):
+                continue
+            if max(rgb) > 0:
+                await self._ensure_power(serial, device)
+            try:
+                await self._send_bulb_packet(device, rgb)
+            except Exception:
+                _LOGGER.warning("Bulb packet send failed for %s", serial, exc_info=True)
+
+        for serial, zone_map in zones.items():
+            device = self._device(serial)
+            if device is None or self._rate_limited(serial):
+                continue
+            frame = self._last_frame.setdefault(serial, {})
+            frame.update(zone_map)
+            self._last_frame[serial] = frame
+            if frame and max(max(rgb) for rgb in frame.values()) > 0:
+                await self._ensure_power(serial, device)
+            try:
+                await self._send_matrix_frame(serial, device, frame, target)
+            except Exception:
+                _LOGGER.warning("Matrix send failed for %s", serial, exc_info=True)
+
+    async def close(self) -> None:
+        """Close all device connections owned by this sender."""
+        self._close_animators()
+        for serial, device in self._devices.items():
+            try:
+                await device.close()
+            except Exception:
+                _LOGGER.debug("Close failed for %s", serial, exc_info=True)
+        self._devices.clear()
+
+    @property
     def _bulb_interval(self) -> float:
         """Bulbs are capped at 20 Hz (LedFx: higher rates strobo)."""
         return max(self._min_interval, 1.0 / 20)
@@ -254,11 +363,6 @@ class LifxSender:
     def _bulb_duration_ms(self) -> int:
         """Bulb transition: exactly one frame interval (LedFx-style)."""
         return max(1, int(1000 * self._bulb_interval) - 2)
-
-    @property
-    def target(self) -> SyncTarget:
-        """The sync target this sender writes to."""
-        return self._target
 
     # -- helpers -------------------------------------------------------------
 
@@ -326,59 +430,6 @@ class LifxSender:
             _LOGGER.warning("set_power failed for %s", serial, exc_info=True)
         self._powered_on.add(serial)
 
-    # -- snapshot / restore --------------------------------------------------
-
-    async def snapshot(self) -> None:
-        """Record the current state of every reachable target light."""
-        async with self._lock:
-            self._snapshots.clear()
-            for light in self._target.lights:
-                device = self._device(light.serial)
-                if device is None:
-                    continue
-                snapshot = DeviceSnapshot(serial=light.serial)
-                try:
-                    color, power, _label = await device.get_color()
-                    snapshot.color = _hsbk_components(color)
-                    snapshot.power = int(power)
-                except Exception:
-                    _LOGGER.warning("Snapshot color failed for %s", light.serial, exc_info=True)
-                if light.is_matrix:
-                    try:
-                        tiles = await device.get_all_tile_colors()
-                        if tiles:
-                            snapshot.zone_colors = [
-                                components
-                                for components in (_hsbk_components(zone) for zone in tiles[0])
-                                if components is not None
-                            ]
-                    except Exception:
-                        _LOGGER.debug("Snapshot zones failed for %s", light.serial, exc_info=True)
-                self._snapshots[light.serial] = snapshot
-
-    async def restore(self) -> None:
-        """Restore the snapshot taken by :meth:`snapshot` (best effort)."""
-        # Animators bypass the device color methods; close them so the
-        # awaited restore calls below own the device state again.
-        self._close_animators()
-        async with self._lock:
-            snapshots, self._snapshots = self._snapshots, {}
-            self._powered_on.clear()
-            self._last_frame.clear()
-        for serial, snapshot in snapshots.items():
-            device = self._device(serial)
-            if device is None:
-                continue
-            try:
-                if snapshot.zone_colors:
-                    await self._restore_zones(serial, device, snapshot)
-                elif snapshot.color is not None:
-                    await device.set_color(self._hsbk_from_components(snapshot.color))
-                if snapshot.power is not None:
-                    await device.set_power(bool(snapshot.power))
-            except Exception:
-                _LOGGER.debug("Restore failed for %s", serial, exc_info=True)
-
     def _hsbk_from_components(self, components: tuple[float, float, float, int]) -> Any:
         from lifx.color import HSBK  # noqa: PLC0415
 
@@ -408,47 +459,6 @@ class LifxSender:
         if light is not None:
             return light.downlight_zone_count
         return max(0, len(colors) - 1)
-
-    # -- sending ---------------------------------------------------------------
-
-    async def send(
-        self, commands: Sequence[LightColorCommand], target: SyncTarget | None = None
-    ) -> None:
-        """Apply one render's commands (rate-limited per device)."""
-        target = target or self._target
-        bulbs: dict[str, RGB] = {}
-        zones: dict[str, dict[int, RGB]] = {}
-        for command in commands:
-            serial, zone = _channel_serial_and_zone(command.channel_id)
-            if zone is None:
-                bulbs[serial] = command.rgb
-            else:
-                zones.setdefault(serial, {})[zone] = command.rgb
-
-        for serial, rgb in bulbs.items():
-            device = self._device(serial)
-            if device is None or self._rate_limited(serial, self._bulb_interval):
-                continue
-            if max(rgb) > 0:
-                await self._ensure_power(serial, device)
-            try:
-                await self._send_bulb_packet(device, rgb)
-            except Exception:
-                _LOGGER.warning("Bulb packet send failed for %s", serial, exc_info=True)
-
-        for serial, zone_map in zones.items():
-            device = self._device(serial)
-            if device is None or self._rate_limited(serial):
-                continue
-            frame = self._last_frame.setdefault(serial, {})
-            frame.update(zone_map)
-            self._last_frame[serial] = frame
-            if frame and max(max(rgb) for rgb in frame.values()) > 0:
-                await self._ensure_power(serial, device)
-            try:
-                await self._send_matrix_frame(serial, device, frame, target)
-            except Exception:
-                _LOGGER.warning("Matrix send failed for %s", serial, exc_info=True)
 
     async def _send_matrix_frame(
         self,
@@ -493,16 +503,6 @@ class LifxSender:
             await device.set_downlight_colors(colors[:-1], duration=0.12)
             return
         await device.set_matrix_colors(0, colors, duration=120)
-
-    async def close(self) -> None:
-        """Close all device connections owned by this sender."""
-        self._close_animators()
-        for serial, device in self._devices.items():
-            try:
-                await device.close()
-            except Exception:
-                _LOGGER.debug("Close failed for %s", serial, exc_info=True)
-        self._devices.clear()
 
 
 __all__ = ["DeviceSnapshot", "LifxSender", "open_devices"]

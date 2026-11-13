@@ -35,7 +35,7 @@ def _as_str(value: Any, default: str = "") -> str:
 def _as_int(value: Any, default: int, minimum: int, maximum: int) -> int:
     try:
         number = int(float(str(value)))  # accept "80" and 80.0 alike
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default
     return max(minimum, min(maximum, number))
 

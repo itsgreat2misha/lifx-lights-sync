@@ -148,7 +148,7 @@ class LifxTargetBridge:
 
         # Register this client as a LIGHT player type with the Sendspin
         # provider so the resulting player shows up correctly in the UI.
-        sendspin_prov: SendspinProvider | None = self.mass.get_provider("sendspin")
+        sendspin_prov: SendspinProvider | None = self.mass.get_provider("sendspin")  # type: ignore[assignment]
         if sendspin_prov:
             sendspin_prov.register_bridge_player_type(client_id, PlayerType.LIGHT)
 
