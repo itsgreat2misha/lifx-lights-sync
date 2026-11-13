@@ -7,8 +7,7 @@ light) appears as a virtual LIGHT player in Music Assistant. Playing
 music to the player makes the lights react to the music in real time.
 
 Modeled on the built-in Hue Lights Sync plugin (hue_entertainment);
-this module follows its exact shape for the installed Music Assistant
-version.
+this module follows its shape.
 """
 
 from __future__ import annotations

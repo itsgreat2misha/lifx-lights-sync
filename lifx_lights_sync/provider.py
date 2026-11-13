@@ -6,11 +6,11 @@ each sync target (one per Home Assistant area, plus one per matrix /
 ceiling light). When music plays to a virtual player, the lights in
 that target react to the music.
 
-Modeled on the installed Hue Lights Sync provider
+Modeled on Music Assistant's Hue Lights Sync provider
 (``music_assistant.providers.hue_entertainment.provider``): provider
 shape, config-entry style and the ``update_config`` live-apply pattern
-follow it directly, aligned against the installed Music Assistant
-version (music_assistant_models imports, ``ConfigEntryType``,
+follow it directly, using the current Music Assistant APIs
+(music_assistant_models imports, ``ConfigEntryType``,
 ``PluginProvider`` from ``music_assistant.models.plugin``).
 
 Discovery order for source ``auto`` (the default):

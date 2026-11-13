@@ -1,11 +1,9 @@
 # LIFX Lights Sync
 
-> **Status: alpha, live-tested on the maintainer's own Music Assistant
-> install** with real LIFX lights (end-to-end streaming runs there).
-> The provider runs against upstream Music Assistant `dev`
-> (aiosendspin 10.3.0, music-assistant-models 1.1.238), and its test
-> suite passes under upstream pytest. It is not yet part of Music
-> Assistant itself, and other people's installs are untested.
+> **Status: alpha.** This provider is not part of Music Assistant
+> itself. It has been tested on the maintainer's own Music
+> Assistant install with real LIFX lights; other installs are
+> untested.
 
 A Music Assistant **plugin** that makes your LIFX lights react to
 whatever is playing — colors and brightness driven by the music, the
@@ -74,7 +72,7 @@ is the alternative when the hass provider is not configured.
                       ▼ serials            │ an IP, or HA absent
                   ┌─────────────────────────────────────────┐
                   │ LAN discovery (lifx-async)              │
-                  │   UDP broadcast + mDNS, then a unicast  │
+                  │   UDP broadcast, then a unicast sweep   │
                   │   subnet sweep for missing serials      │
                   │   -> serial, IP, label, product,        │
                   │      matrix width/height  [IP SOURCE,   │
@@ -172,7 +170,7 @@ nothing changes at all: the stored settings values are used directly.
 ```
 lifx_lights_sync/
 ├── __init__.py      Plugin entry point; setup() lazily imports the
-│                    provider (exact installed Hue pattern).
+│                    provider (the Hue plugin's pattern).
 ├── manifest.json    Plugin manifest (domain, deps, requirements).
 ├── strings.json     Config entry labels/help and setup-flow text
 │                    for the MA UI.
@@ -221,10 +219,8 @@ python3 -m json.tool lifx_lights_sync/strings.json > /dev/null
 To try the LIFX output path against real hardware you need a Music
 Assistant instance with the Sendspin provider enabled, `lifx-async`
 installed, and LIFX lights on the LAN. The Music Assistant / Sendspin
-call shapes in `bridge.py` and `provider.py` were aligned against
-the Music Assistant source and import-verified, and the full path
-has been run end-to-end against real lights on the maintainer's
-install.
+call shapes in `bridge.py` and `provider.py` target aiosendspin
+10.3.0 and music-assistant-models 1.1.238.
 
 Lint and type checks mirror Music Assistant's own tooling
 (ruff + mypy via pre-commit, configured in `pyproject.toml`):
@@ -247,7 +243,7 @@ pip install pre-commit && pre-commit run --all-files
   is absent, targets come from LAN discovery alone.
 - **A light is known to Home Assistant but never reacts.** Its IP
   still has to be found on the LAN: Home Assistant's registries do
-  not provide IPs, so the plugin uses broadcast/mDNS discovery and
+  not provide IPs, so the plugin uses broadcast discovery and
   then unicast-probes every host of the subnets where lights are
   already known to live. Make sure the light is powered on and
   reachable on the LAN from the Music Assistant server; a light on
@@ -289,9 +285,7 @@ stored entry is removed.
 
 ## Roadmap
 
-- [ ] Measure sustained frame rate on a 16 x 8 ceiling and, if needed,
-      switch matrix writes to the lifx-async `Animator` fast path
-      (`device.animator.prepare()` + synchronous `send_frame()`).
+- [ ] Measure sustained frame rate on a 16 x 8 ceiling.
 - [ ] Per-target settings (e.g. different modes per room).
 - [ ] Re-discovery / IP refresh on stream start (lights change IPs).
 
