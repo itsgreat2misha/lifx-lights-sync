@@ -14,50 +14,47 @@ everything after the initial commit is recorded under `[Unreleased]`.
 ### Added
 
 - Dedicated Bass color mode: one shared brightness envelope driven
-  only by the low spectrum bins (20-369 Hz), later revised to follow
-  the smoothed low-band level per spectrum frame (2026-11-03).
+  only by the low spectrum bins (20-369 Hz), revised to follow the
+  smoothed low-band level per spectrum frame.
 - Brightness floor setting (`brightness_floor`): a configurable
   resting brightness between hits; the existing Brightness setting
-  is the peak cap (2026-11-03).
+  is the peak cap.
 - Debug frame log setting (`debug_frame_log`): when enabled, each
   streaming target logs one FRAMELOG line per second with the
-  mean/max brightness actually commanded (2026-11-03).
+  mean/max brightness actually commanded.
 - Setup flow for direct Home Assistant credentials (HA URL and
   long-lived access token), for installs where Music Assistant's
-  Home Assistant provider is not configured; the provider stage was
-  set to `alpha` in the same change (2026-11-04).
-- Public-release hygiene: CI workflow (ruff, mypy, JSON validation,
-  and unit tests on push and pull request), Music Assistant-style
-  ruff + mypy pre-commit tooling, `SECURITY.md`, and issue
-  templates (2026-11-03 to 2026-11-04).
-- Dependabot configuration and an OpenSSF Scorecard workflow, and
-  least-privilege permissions in the CI workflow (2026-11-04).
-- Documentation: `CONTRIBUTING.md`, this changelog, a pull request
-  template, and Troubleshooting and Uninstalling sections in the
-  README.
+  Home Assistant provider is not configured; the provider stage
+  was set to `alpha` in the same change.
+- Project documentation and repository tooling: `CONTRIBUTING.md`,
+  this changelog, issue and pull request templates, `SECURITY.md`,
+  README Troubleshooting and Uninstalling sections,
+  Music Assistant-style ruff + mypy pre-commit tooling, a CI
+  workflow with least-privilege permissions (ruff, mypy, JSON
+  validation, and the test suite on push and pull request),
+  Dependabot configuration, and an OpenSSF Scorecard workflow.
 
 ### Changed
 
 - The analyzer was reworked into a faithful port of the Hue
   analyzer: transient-only per-channel multipliers, onset peaks,
   spectrum noise gate and gamma, bass-transient saturation, and
-  beat-segment palette interpolation, rendered at 50 Hz
-  (2026-11-03).
+  beat-segment palette interpolation, rendered at 50 Hz.
 - Energetic mode's brightness is now driven only by the low
   spectrum bins, with a bass-band transient also lifting global
-  brightness (2026-11-03).
+  brightness.
 - The LIFX output layer now sends fire-and-forget color packets to
   bulbs at a steady 20 Hz cap, and matrix/ceiling frames go through
-  the lifx-async Animator (2026-11-03).
+  the lifx-async Animator.
 - Discovery via Music Assistant's hass provider no longer uses the
-  unsupported `config_entries/get` call (2026-11-04).
+  unsupported `config_entries/get` call.
 - Live-apply was fixed so the brightness floor and debug frame log
-  settings take effect on running bridges (2026-11-04).
-- Tooling aligned to the Music Assistant upstream pins (ruff
-  0.16.5, mypy 2.3.0, Python 3.14 target): the test suite was
-  rewritten in pytest style, provider methods were reordered so
+  settings take effect on running bridges.
+- The test suite was rewritten in pytest style, with tooling
+  aligned to the Music Assistant upstream pins (ruff 0.16.5, mypy
+  2.3.0, Python 3.14 target); provider methods were reordered so
   public methods precede private ones, and the provider manifest
-  no longer carries the non-standard `version` field (2026-11-13).
+  no longer carries the non-standard `version` field.
 
 ### Fixed
 
@@ -65,18 +62,24 @@ everything after the initial commit is recorded under `[Unreleased]`.
   match the current state — the provider runs against upstream
   Music Assistant `dev` and the test suite runs under pytest — and
   the Known limitations section, whose entries (matrix
-  classification, upstream alignment) no longer apply, was removed
-  (2026-11-13).
+  classification, upstream alignment) no longer apply, was removed.
+- Documentation and comment corrections: contributor instructions
+  in `CONTRIBUTING.md` and the pull request template now describe
+  the pytest suite; LAN discovery is described as broadcast-only
+  in the README, `CONTRIBUTING.md`, and the discovery module,
+  matching the code (no mDNS is used); the README Roadmap no
+  longer lists the shipped Animator fast path as future work; and
+  code headers no longer cite a superseded aiosendspin version or
+  describe the Hue/MA references as "installed".
 - Lights silently doing nothing: typed LIFX light/matrix/ceiling
   devices are now created instead of the base device type returned
-  by IP lookup, which has no color methods (2026-11-02).
+  by IP lookup, which has no color methods.
 - Missing light IPs: because Home Assistant strips config-entry
   data, IPs are now found by a unicast subnet sweep for serials
-  still missing an IP (2026-11-02).
+  still missing an IP.
 - Frozen output: spectrum bins are uint16 dB-scaled values, not
   0-255, and visualizer frames are rendered on their own
-  timestamped timeline rather than the server clock (2026-11-02
-  to 2026-11-03).
+  timestamped timeline rather than the server clock.
 
 ## [0.1.0] - 2026-11-02
 

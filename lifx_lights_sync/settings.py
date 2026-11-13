@@ -1,8 +1,9 @@
 """
 Readers for the LIFX Lights Sync playback/discovery settings.
 
-Mirrors the installed Hue Lights Sync ``settings.py``: each reader takes
-the provider's ``ProviderConfig`` and normalizes the raw value returned
+Mirrors the Hue Lights Sync ``settings.py`` in Music Assistant:
+each reader takes the provider's ``ProviderConfig`` and normalizes
+the raw value returned
 by ``config.get_value(key)`` (stored values can come back as str/float,
 so numbers go through ``int(float(str(value)))``).
 

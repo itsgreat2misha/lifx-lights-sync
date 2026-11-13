@@ -1,7 +1,7 @@
 """
 LIFX bridge — in-process Sendspin visualizer client.
 
-Modeled directly on the installed Hue Lights Sync bridge
+Modeled directly on Music Assistant's Hue Lights Sync bridge
 (``music_assistant.providers.hue_entertainment.bridge``): each sync
 target registers as an external Sendspin client whose bridge roles run
 the server's visualizer feature extraction on the group's audio and
@@ -14,7 +14,7 @@ state at stream start and restores it at stream stop.
 
 All Music Assistant / aiosendspin imports and call shapes in this
 module were aligned against the Music Assistant / aiosendspin API
-surface this plugin targets (aiosendspin 10.2.1):
+surface this plugin targets (aiosendspin 10.3.0):
 ``register_external_player``
 is a *synchronous* call returning a ``SendspinClient``; roles are
 fetched via ``client.roles_by_family(...)`` and subscribed via

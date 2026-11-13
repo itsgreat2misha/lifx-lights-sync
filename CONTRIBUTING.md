@@ -4,8 +4,9 @@ Thanks for helping. This project is a Music Assistant provider
 plugin (Python) that syncs LIFX lights to music via the Sendspin
 visualizer stream. It is not a standalone app: the provider code in
 `lifx_lights_sync/` only runs inside a Music Assistant instance,
-while the pure modules (discovery, color, analyzer) and the test
-suite are dependency-free.
+while the pure modules (discovery, color, analyzer) are
+dependency-free; the test suite that covers them runs under
+pytest.
 
 ## Before you start
 
@@ -18,10 +19,11 @@ suite are dependency-free.
 
 ```bash
 # From the repo root (no Music Assistant, lifx-async, aiohttp or
-# numpy needed for the pure modules and the test suite):
-python3 -m unittest discover -s tests -v
-# The suite is stdlib unittest by design; pytest can also run it:
-python3 -m pytest tests
+# numpy needed — the pure modules are dependency-free; the test
+# suite runs under pytest, with the same test dependencies CI
+# installs):
+pip install pytest==9.1.1 pytest-aiohttp==1.1.1 pytest-asyncio==1.5.0
+python3 -m pytest tests -v
 
 # Lint and type checks (mirroring Music Assistant's own tooling,
 # configured in pyproject.toml):
@@ -51,7 +53,7 @@ migration story in the PR:
   `send_rate_hz`).
 - Discovery behaviour: Home Assistant provides identity (names,
   areas, serials) through its registries, and light IPs come from
-  the LAN (broadcast/mDNS discovery plus a unicast subnet sweep for
+  the LAN (broadcast discovery plus a unicast subnet sweep for
   serials still missing an IP). Do not add a dependency on raw
   Home Assistant WebSocket commands on another provider's client;
   the hass-provider path uses that provider's public registry

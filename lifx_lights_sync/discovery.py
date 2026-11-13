@@ -16,8 +16,8 @@ Strategy (see README for the diagram):
    an authenticated connection; see ``ha_via_mass``) or directly
    over HA's WebSocket API with a configured URL + long-lived token
    (:func:`fetch_ha_lifx_lights`).
-2. Discover devices on the LAN with lifx-async (UDP broadcast +
-   mDNS): fallback when HA is absent, cross-check, and the only
+2. Discover devices on the LAN with lifx-async (UDP broadcast):
+   fallback when HA is absent, cross-check, and the only
    source of matrix geometry. Broadcast alone is unreliable across
    VLANs/relays (it found barely half of a 66-light install).
 3. Unicast sweep (:func:`sweep_for_serials`): for every HA-known
