@@ -1,3 +1,8 @@
+> **Archived — this repository is the pre-1.0.0 development history.**
+> LIFX Lights Sync continues at
+> [itsgreat2misha/ma-lifx-lights-sync](https://github.com/itsgreat2misha/ma-lifx-lights-sync)
+> (v1.0.0 and later). Please file issues and pull requests there.
+
 # LIFX Lights Sync
 
 > **Status: alpha.** This provider is not part of Music Assistant
