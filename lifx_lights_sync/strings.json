@@ -29,7 +29,7 @@
       "label": "Latency compensation (ms)"
     },
     "send_rate_hz": {
-      "description": "Rate limit for color updates sent to each individual LIFX light.",
+      "description": "Rate limit (1-30 per second) for color updates sent to each LIFX light. Bulbs are capped at 20 per second; only matrix devices in their matrix targets honour rates above 20.",
       "label": "Max sends per second (per light)"
     },
     "debug_frame_log": {
