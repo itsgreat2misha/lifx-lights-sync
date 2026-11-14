@@ -71,6 +71,14 @@ everything after the initial commit is recorded under `[Unreleased]`.
   longer lists the shipped Animator fast path as future work; and
   code headers no longer cite a superseded aiosendspin version or
   describe the Hue/MA references as "installed".
+- Documentation corrections: the send rate is now described with
+  its per-device scope (bulbs are capped at 20 Hz; only matrix
+  devices honour the configured rate, up to 30 Hz), the
+  installation steps say how to obtain the provider folder and
+  state the Music Assistant 2.10 minimum, the setup form is
+  described as appearing on every add/reconfigure with both
+  fields optional, and the configuration table lists each
+  setting's range.
 - Lights silently doing nothing: typed LIFX light/matrix/ceiling
   devices are now created instead of the base device type returned
   by IP lookup, which has no color methods.

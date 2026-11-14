@@ -36,7 +36,10 @@ Sendspin player or group, and the lights start reacting.
 - **State restore** — unlike Hue, LIFX lights do not revert on their
   own, so the plugin snapshots every target light before a stream
   starts and restores it when the stream stops.
-- **Rate limiting** — color sends are capped per light (default 20/s).
+- **Rate limiting** — color sends are rate-limited per light
+  (default 20/s); bulbs are capped at 20/s at most, while matrix
+  lights follow the configured rate up to 30/s in their dedicated
+  matrix targets.
 
 ## How discovery works
 
@@ -121,22 +124,38 @@ target — that is intentional: the two targets render differently.
 ## Installation
 
 This is a custom provider for Music Assistant, not a published add-on
-yet.
+yet. It requires Music Assistant server **2.10 or newer** — the setup
+flow in step 4 only exists there. On older servers the provider still
+loads and reads any previously stored HA URL/token from its stored
+settings, but the setup flow is unavailable; that fallback is legacy
+behaviour, not the supported path.
 
-1. Copy the `lifx_lights_sync/` folder into Music Assistant's custom
-   providers directory (the `custom_providers` share on the HA host).
-2. Restart the Music Assistant server / custom-loader add-on.
+1. Download this repository (the green **Code** button → **Download
+   ZIP**, or `git clone
+   https://github.com/itsgreat2misha/lifx-lights-sync`) and unzip it
+   if needed. Copy the `lifx_lights_sync/` folder from it into Music
+   Assistant's custom providers directory: the folder named
+   `custom_providers` on the Music Assistant host (exposed as a share
+   on add-on installs) — the directory Music Assistant scans for
+   extra providers at startup.
+2. Restart the Music Assistant server (or the add-on/loader that
+   provides the `custom_providers` folder, if your install uses one).
 3. In Music Assistant, go to **Settings → Plugins → Add a plugin** and
    select **LIFX Lights Sync**.
-4. If Music Assistant's Home Assistant provider is configured, you
-   are done — discovery borrows its connection. Only if it is *not*
-   configured, the setup flow asks for a direct connection instead:
-   enter your HA URL and a long-lived access token (HA profile →
-   Security → Long-lived access tokens; read-only registry access is
-   all it needs). The credentials are stored encrypted by Music
+4. Adding the plugin opens a setup form for an *optional* direct Home
+   Assistant connection. The form appears either way. If Music
+   Assistant's Home Assistant provider is configured, leave both
+   fields empty and submit: discovery then borrows the hass provider's
+   connection, and no HA credentials are entered in this plugin at
+   all. If you only want LAN discovery, leave them empty too — no
+   Home Assistant connection is used at all in that mode. Only enter
+   your HA URL and a long-lived access token (HA profile → Security →
+   Long-lived access tokens; read-only registry access is all it
+   needs) to use a direct connection instead. The credentials are
+   stored encrypted by Music
    Assistant's setup-flow store, not in this plugin's settings; to
-   change or clear them later, use the plugin's **Reconfigure** action
-   (leaving the token empty there keeps the stored one).
+   change or clear them later, use the plugin's **Reconfigure**
+   action (leaving the token empty there keeps the stored one).
 5. Each discovered target appears as a LIGHT player. Join it to any
    Sendspin player or group that is playing.
 
@@ -147,11 +166,11 @@ yet.
 | Discovery source | `discovery_source` | `auto` | `auto` = MA hass provider → direct HA (if configured) → LAN; `hass` = MA's HA provider only; `ha` = direct HA only (LAN fills IP gaps in both HA modes); `lan` = LAN only |
 | Home Assistant URL | `ha_url` | — | *Setup flow, not a setting.* Base URL, e.g. `http://homeassistant.local:8123`. Only needed when MA's Home Assistant provider is not configured |
 | Home Assistant token | `ha_token` | — | *Setup flow, not a setting.* Long-lived access token, stored encrypted in Music Assistant's setup-data store. Same condition as above — with the hass provider configured, no HA credentials are entered in this plugin at all |
-| Brightness (%) | `brightness` | 80 | Cap on effect brightness (the peaks) |
-| Brightness floor (%) | `brightness_floor` | 0 | Resting brightness between hits; 0 keeps each mode's built-in rest level |
+| Brightness (%) | `brightness` | 80 | Range 1–100. Cap on effect brightness (the peaks) |
+| Brightness floor (%) | `brightness_floor` | 0 | Range 0–99. Resting brightness between hits; 0 keeps each mode's built-in rest level |
 | Color mode | `color_mode` | `smooth` | `smooth` / `ambient` / `flashing` / `energetic` / `bass` |
-| Latency compensation (ms) | `latency_ms` | 0 | Shifts render time for speaker/network latency |
-| Max sends per second | `send_rate_hz` | 20 | Per-light rate limit |
+| Latency compensation (ms) | `latency_ms` | 0 | Range 0–2000. Shifts render time for speaker/network latency |
+| Max sends per second | `send_rate_hz` | 20 | Range 1–30. Per-light rate limit; bulbs are hard-capped at 20, so only matrix/ceiling devices in their matrix targets honour rates above 20 |
 | Debug frame log | `debug_frame_log` | off | Logs one FRAMELOG line per second per streaming target with the mean/max brightness actually commanded (for diagnosing sync from the server log) |
 
 Brightness, brightness floor, color mode, latency, send rate and the
